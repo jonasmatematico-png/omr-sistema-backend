@@ -4,6 +4,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from supabase import create_client, Client
+import os
 
 # 🚨 A MÁGICA DA CÂMERA: Importa o blueprint que já existe no seu projeto!
 from routes.corrigir import corrigir_bp
@@ -194,6 +195,10 @@ def salvar_gabarito():
 if __name__ == '__main__':
     print("🚨🚨🚨 OMR SISTEMA 2.0 - HÍBRIDO (SUPABASE + CÂMERA) 🚨🚨🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
-    print("📡 Servidor em http://0.0.0.0:5000")
-    # Em produção, ouvir todas as interfaces
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    
+    # 🚨 CORREÇÃO CRUCIAL PARA O RENDER: 
+    # Pega a porta que a nuvem fornece, ou usa 5000 se estiver no PC
+    port = int(os.environ.get("PORT", 5000))
+    print(f"📡 Servidor rodando na porta: {port}")
+    
+    app.run(host='0.0.0.0', port=port, debug=False)
