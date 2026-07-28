@@ -20,7 +20,7 @@ app.register_blueprint(corrigir_bp)
 # ==========================================================
 SUPABASE_URL = "https://mkqnaiuplkqiitwxltli.supabase.co"
 # COLE A CHAVE REAL AQUI EMBAIXO (a que começa com eyJ...)
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1rcW5haXVwbGtxaWl0d3hsdGxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE2... (cole sua chave completa aqui)"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1rcW5haXVwbGtxaWl0d3hsdGxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzOTg5MzMsImV4cCI6MjA5OTk3NDkzM30.65MoDC1gMNpNs6bCKZlCTyCn2ijaaA6y9DOnQgNxacA"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
