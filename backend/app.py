@@ -19,7 +19,9 @@ app.register_blueprint(corrigir_bp)
 # 🔑 CONFIGURAÇÃO DO SUPABASE
 # ==========================================================
 SUPABASE_URL = "https://mkqnaiuplkqiitwxltli.supabase.co"
-SUPABASE_KEY = "sb_publishable_r-Tqilnqa8Q6iDURFV14rQ_W2wFuZoK"
+# COLE A CHAVE REAL AQUI EMBAIXO (a que começa com eyJ...)
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1rcW5haXVwbGtxaWl0d3hsdGxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE2... (cole sua chave completa aqui)"
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ==========================================================
