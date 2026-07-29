@@ -8,12 +8,14 @@ import json
 from datetime import datetime
 from flask import Blueprint, request, jsonify
 from services.omr import processar_imagem
-from app import supabase  # Importa o cliente do Supabase
 
 corrigir_bp = Blueprint('corrigir', __name__)
 
 @corrigir_bp.route('/corrigir', methods=['POST'])
 def corrigir():
+    # 🔹 IMPORTAÇÃO LOCAL PARA EVITAR ERRO CIRCULAR
+    from app import supabase 
+
     print("\n--- 📷 [corrigir.py] RECEBENDO FOTO DO CELULAR PARA LEITURA OMR ---")
     
     foto_path = None
