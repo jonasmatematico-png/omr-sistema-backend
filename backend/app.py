@@ -101,7 +101,7 @@ def salvar_correcao_omr():
     id_aluno = dados.get('id_aluno')
     id_avaliacao = dados.get('id_avaliacao', 1) # Se não enviar, usa 1 como padrão
     nome_aluno = dados.get('nome', '')
-    turma_nome = dados.get('turma', '')ا
+    turma_nome = dados.get('turma', '')
     nota_final = float(dados.get('nota_final', 0.0))
     
     # NOVO: Lista de respostas detalhadas que o celular deve enviar
