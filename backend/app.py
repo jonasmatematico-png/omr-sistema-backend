@@ -96,37 +96,62 @@ def salvar_correcao_omr():
         return jsonify({'erro': 'Formato inválido. Envie JSON.'}), 400
     
     dados = request.get_json()
+    
+    # Tenta pegar os IDs direto (o ideal), senão usa os nomes (fallback)
+    id_aluno = dados.get('id_aluno')
+    id_avaliacao = dados.get('id_avaliacao', 1) # Se não enviar, usa 1 como padrão
     nome_aluno = dados.get('nome', '')
-    turma_nome = dados.get('turma', '')
+    turma_nome = dados.get('turma', '')ا
     nota_final = float(dados.get('nota_final', 0.0))
     
+    # NOVO: Lista de respostas detalhadas que o celular deve enviar
+    detalhes_respostas = dados.get('detalhes_respostas', [])
+    
     try:
-        resp_turma = supabase.table("turmas").select("id").eq("nome", turma_nome).execute()
-        if not resp_turma.data:
-            return jsonify({"sucesso": False, "erro": f"Turma '{turma_nome}' não encontrada"}), 404
-        id_turma = resp_turma.data[0]['id']
-        
-        resp_aluno = supabase.table("alunos").select("id").eq("nome", nome_aluno).eq("id_turma", id_turma).execute()
-        if not resp_aluno.data:
-            return jsonify({"sucesso": False, "erro": f"Aluno '{nome_aluno}' não encontrado"}), 404
-        id_aluno = resp_aluno.data[0]['id']
+        # Se o ID do aluno não veio direto, busca pelo nome (para não quebrar seu app atual)
+        if not id_aluno:
+            resp_turma = supabase.table("turmas").select("id").eq("nome", turma_nome).execute()
+            if not resp_turma.data:
+                return jsonify({"sucesso": False, "erro": f"Turma '{turma_nome}' não encontrada"}), 404
+            id_turma = resp_turma.data[0]['id']
+            
+            resp_aluno = supabase.table("alunos").select("id").eq("nome", nome_aluno).eq("id_turma", id_turma).execute()
+            if not resp_aluno.data:
+                return jsonify({"sucesso": False, "erro": f"Aluno '{nome_aluno}' não encontrado"}), 404
+            id_aluno = resp_aluno.data[0]['id']
         
         nivel = "Abaixo do Básico"
         if nota_final >= 8: nivel = "Avançado"
         elif nota_final >= 6: nivel = "Adequado"
-        elif nota_final >= 4: nivel = "Básico"
+        elif nota_final >= 4: nivel = "Bás"
         
+        # 1. SALVAR RESULTADO FINAL (Já fazia isso)
         supabase.table("resultados").insert({
             "id_aluno": id_aluno,
-            "id_avaliacao": 1,
+            "id_avaliacao": id_avaliacao,
             "nota_bruta": nota_final,
             "nota_final": round(nota_final),
             "nivel_saeb": nivel,
             "devolutiva": f"O aluno acertou questões totalizando nota {nota_final}."
         }).execute()
+
+        # 2. 🚨 NOVO: SALVAR CADA RESPOSTA NA TABELA 'respostas'
+        if detalhes_respostas:
+            print(f"💾 Salvando {len(detalhes_respostas)} respostas detalhadas no banco...")
+            for item in detalhes_respostas:
+                supabase.table("respostas").insert({
+                    "id_avaliacao": id_avaliacao,
+                    "id_aluno": id_aluno,
+                    "id_questao": item.get('questao'),
+                    "resposta_aluno": item.get('resposta', ''),
+                    "correta": item.get('correta', False)
+                }).execute()
+            print("✅ Respostas detalhadas salvas com sucesso!")
         
-        return jsonify({'sucesso': True, 'mensagem': f'Nota {round(nota_final)} gravada com sucesso!'}), 200
+        return jsonify({'sucesso': True, 'mensagem': f'Nota {round(nota_final)} e respostas gravadas com sucesso!'}), 200
+        
     except Exception as e:
+        print(f"❌ ERRO AO SALVAR: {e}")
         return jsonify({'sucesso': False, 'erro': str(e)}), 500
 
 @app.route('/api/avaliacoes/criar', methods=['POST'])

@@ -90,19 +90,21 @@ def corrigir():
         
         porcentual_acertos = (acertos / total_questoes * 100) if total_questoes > 0 else 0
 
-        # 🔹 6. SALVA CADA RESPOSTA NA TABELA 'respostas'
-        print(f"💾 Salvando {total_questoes} respostas na tabela 'respostas'...")
+        # 🔹 6. SALVA CADA RESPOSTA NA TABELA 'respostas' (USANDO UPSERT PARA EVITAR DUPLICIDADE)
+        print(f"💾 Salvando ou atualizando {total_questoes} respostas na tabela 'respostas'...")
         for i, resp in enumerate(respostas_omr):
             gab_certo = gabarito_recebido[i] if i < len(gabarito_recebido) else 'A'
-            supabase.table('respostas').insert({
+            
+            supabase.table('respostas').upsert({
                 'id_avaliacao': id_avaliacao,
                 'id_aluno': id_aluno,
                 'id_questao': i + 1,
                 'resposta_aluno': resp if resp else '',
                 'correta': (resp == gab_certo) if resp else False
-            }).execute()
-        print("✅ Respostas salvas com sucesso!")
-
+            }, on_conflict="id_avaliacao,id_aluno,id_questao").execute()
+            
+        print("✅ Respostas salvas/atualizadas com sucesso!")
+        
         # 🔹 7. SALVA RESULTADO FINAL NA TABELA 'resultados'
         print("💾 Salvando resultado final na tabela 'resultados'...")
         supabase.table('resultados').insert({
