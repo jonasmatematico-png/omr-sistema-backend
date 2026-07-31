@@ -15,7 +15,7 @@ corrigir_bp = Blueprint('corrigir', __name__)
 def corrigir():
     # 🔹 IMPORTAÇÃO LOCAL PARA EVITAR ERRO CIRCULAR
     from app import supabase 
-
+    print("🚨🚨🚨 VERSÃO UPSERT CARREGADA COM SUCESSO NO RENDER 🚨🚨🚨")
     print("\n--- 📷 [corrigir.py] RECEBENDO FOTO DO CELULAR PARA LEITURA OMR ---")
     
     foto_path = None
