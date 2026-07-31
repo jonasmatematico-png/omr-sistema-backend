@@ -107,7 +107,7 @@ def corrigir():
         
         # 🔹 7. SALVA RESULTADO FINAL NA TABELA 'resultados'
         print("💾 Salvando resultado final na tabela 'resultados'...")
-        supabase.table('resultados').insert({
+        supabase.table('resultados').upsert({
             'id_avaliacao': id_avaliacao,
             'id_aluno': id_aluno,
             'nota_bruta': nota_bruta,
@@ -119,8 +119,8 @@ def corrigir():
             'acertos_avancados': acertos_avancados,
             'porcentual_acertos': round(porcentual_acertos, 2),
             'data_correcao': datetime.now().isoformat()
-        }).execute()
-        print("✅ Resultado final salvo com sucesso!")
+        }, on_conflict="id_avaliacao,id_aluno").execute()
+        print("✅ Resultado final salvo/atualizado com sucesso!")
 
         # 🔹 8. Monta resposta para o celular
         questoes_config = []
