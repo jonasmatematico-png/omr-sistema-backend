@@ -90,20 +90,33 @@ def corrigir():
         
         porcentual_acertos = (acertos / total_questoes * 100) if total_questoes > 0 else 0
 
-        # 🔹 6. SALVA CADA RESPOSTA NA TABELA 'respostas' (USANDO UPSERT PARA EVITAR DUPLICIDADE)
-        print(f"💾 Salvando ou atualizando {total_questoes} respostas na tabela 'respostas'...")
-        for i, resp in enumerate(respostas_omr):
-            gab_certo = gabarito_recebido[i] if i < len(gabarito_recebido) else 'A'
+        # 🔹 6. DEBUG: Exibe o que está sendo salvo
+        print(f"DEBUG: id_aluno={id_aluno}, id_avaliacao={id_avaliacao}")
+        print(f"DEBUG: Gabarito oficial: {gabarito_recebido}")
+        print(f"DEBUG: Respostas lidas pela câmera: {respostas_omr}")
+        print(f"DEBUG: Total de respostas lidas: {len(respostas_omr)}")
+
+        print(f"💾 Salvando {len(respostas_omr)} respostas na tabela 'respostas'...")
+        for i, resposta_do_aluno in enumerate(respostas_omr):
+            gabarito_da_questao = gabarito_recebido[i] if i < len(gabarito_recebido) else 'A'
             
+            # Verifica se a resposta do aluno foi lida corretamente
+            resposta_salva = resposta_do_aluno if resposta_do_aluno else ''
+            esta_correta = (resposta_salva.upper() == gabarito_da_questao.upper()) if resposta_salva else False
+
+            print(f"DEBUG: Questão {i+1}: resposta_lida='{resposta_do_aluno}', resposta_salva='{resposta_salva}', gabarito='{gabarito_da_questao}', correta={esta_correta}")
+
             supabase.table('respostas').upsert({
                 'id_avaliacao': id_avaliacao,
                 'id_aluno': id_aluno,
                 'id_questao': i + 1,
-                'resposta_aluno': resp if resp else '',
-                'correta': (resp == gab_certo) if resp else False
+                'resposta_aluno': resposta_salva,
+                'correta': esta_correta
             }, on_conflict="id_avaliacao,id_aluno,id_questao").execute()
-            
+
         print("✅ Respostas salvas/atualizadas com sucesso!")
+
+
         
         # 🔹 7. SALVA RESULTADO FINAL NA TABELA 'resultados'
         print("💾 Salvando resultado final na tabela 'resultados'...")
