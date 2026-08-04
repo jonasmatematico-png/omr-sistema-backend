@@ -2,9 +2,10 @@ setuptools>=65.0.0
 wheel>=0.40.0
 flask==3.0.0
 flask-cors==4.0.0
-supabase==2.0.0
+supabase==2.0.3
 python-dotenv==1.0.0
 requests==2.31.0
 numpy==1.26.4
 Pillow==10.0.0
 opencv-python-headless==4.9.0.80
+gunicorn==21.2.0
