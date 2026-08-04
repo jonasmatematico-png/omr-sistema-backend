@@ -222,11 +222,14 @@ def salvar_gabarito():
 if __name__ == '__main__':
     print("🚨🚨🚨 OMR SISTEMA 2.0 - HÍBRIDO (SUPABASE + CÂMERA) 🚨🚨🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
-    
-    # 🚨 CORREÇÃO CRUCIAL PARA O RENDER: 
-    # Pega a porta que a nuvem fornece, ou usa 5000 se estiver no PC
-    port = int(os.environ.get("PORT", 5000))
-    print(f"📡 Servidor rodando na porta: {port}")
-    
+
+    # 🚨 AJUSTE PARA RENDER: Sempre use a porta fornecida pelo ambiente
+    # O Render define automaticamente a variável PORT.
+    # O valor padrão é 10000, mas é melhor deixar o ambiente definir.
+    # Não defina host='127.0.0.1', use '0.0.0.0' como exigido.
+    port = int(os.environ.get("PORT", 10000)) # Alterado o fallback para 10000
+    print(f"📡 Servidor rodando na porta: {port} (host: 0.0.0.0)")
+    print(f"   Acessível em: http://0.0.0.0:{port}")
+
+    # Obrigatório para o Render: Bind em 0.0.0.0
     app.run(host='0.0.0.0', port=port, debug=False)
-    
