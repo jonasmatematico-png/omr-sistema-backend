@@ -1,8 +1,6 @@
 # services/omr.py
 # OMR Sistema 2.0 - Versão estável
 
-print("🚨🚨🚨 OMR.PY - RECORTE CIRÚRGICO NOS CANTOS EXTERNOS 🚨🚨🚨")
-
 import cv2
 import numpy as np
 import os
@@ -55,7 +53,8 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
                 # 🔧 Garante que o gabarito tenha sempre 10 posições (evita break prematuro)
         gabarito_esperado = list(gabarito_esperado) + [''] * (10 - len(gabarito_esperado))
         gabarito_esperado = gabarito_esperado[:10]
-        
+        print("🚨🚨🚨 OMR.PY - RECORTE CIRÚRGICO NOS CANTOS EXTERNOS 🚨🚨🚨")
+
         # ── ETAPA 0: Corrigir orientação EXIF ──
         print("0️⃣ Corrigindo orientação da foto...")
         corrigir_orientacao(caminho_imagem)
