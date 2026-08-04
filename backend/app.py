@@ -7,24 +7,24 @@ from supabase import create_client, Client
 import os
 
 # 🚨 A MÁGICA DA CÂMERA: Importa o blueprint que já existe no seu projeto!
-from routes.corrigir import corrigir_bp
+#from routes.corrigir import corrigir_bp
 
 # 🚨 A MÁGICA DA CÂMERA: Importa o blueprint que já existe no seu projeto!
-from routes.corrigir import corrigir_bp
-print("DEBUG: Blueprint 'corrigir_bp' importado com sucesso.") # Adicione esta linha
+#from routes.corrigir import corrigir_bp
+#print("DEBUG: Blueprint 'corrigir_bp' importado com sucesso.") # Adicione esta linha
 
 app = Flask(__name__)
 CORS(app)
 
 # Registra a rota da câmera
-app.register_blueprint(corrigir_bp)
-print("DEBUG: Blueprint 'corrigir_bp' registrado com sucesso.") # Adicione esta linha
+#app.register_blueprint(corrigir_bp)
+#print("DEBUG: Blueprint 'corrigir_bp' registrado com sucesso.") # Adicione esta linha
 
 app = Flask(__name__)
 CORS(app)
 
 # Registra a rota da câmera
-app.register_blueprint(corrigir_bp)
+#app.register_blueprint(corrigir_bp)
 
 # ==========================================================
 # 🔑 CONFIGURAÇÃO DO SUPABASE
