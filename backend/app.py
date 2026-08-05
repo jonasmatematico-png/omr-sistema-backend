@@ -6,13 +6,9 @@ from flask_cors import CORS
 from supabase import create_client, Client
 import os
 
-# 🚨 A MÁGICA DA CÂMERA: Importa o blueprint que já existe no seu projeto!
-from routes.corrigir import corrigir_bp
-print("DEBUG: Blueprint 'corrigir_bp' importado com sucesso.") # Adicione esta linha
-
-# Registra a rota da câmera
-app.register_blueprint(corrigir_bp)
-print("DEBUG: Blueprint 'corrigir_bp' registrado com sucesso.") # Adicione esta linha
+# ==========================================================
+# 🔑 CRIAÇÃO DO OBJETO FLASK E CONFIGURAÇÃO INICIAL
+# ==========================================================
 
 app = Flask(__name__)
 CORS(app)
@@ -21,10 +17,23 @@ CORS(app)
 # 🔑 CONFIGURAÇÃO DO SUPABASE
 # ==========================================================
 SUPABASE_URL = "https://mkqnaiuplkqiitwxltli.supabase.co"
-# COLE A CHAVE REAL AQUI EMBAIXO (a que começa com eyJ...)
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1rcW5haXVwbGtxaWl0d3hsdGxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzOTg5MzMsImV4cCI6MjA5OTk3NDkzM30.65MoDC1gMNpNs6bCKZlCTyCn2ijaaA6y9DOnQgNxacA"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ==========================================================
+# 🚨 CARREGAMENTO E REGISTRO DO BLUEPRINT DE CORREÇÃO (DEVE VIR DEPOIS DA CRIAÇÃO DO APP)
+# ==========================================================
+
+# Importa o blueprint *depois* que 'app' e 'supabase' são definidos
+# A importação é feita aqui para garantir que 'app' já exista quando 'corrigir_bp' for registrado.
+# O 'print' de debug é opcional, mas ajuda a confirmar o carregamento.
+from routes.corrigir import corrigir_bp
+print("DEBUG: Blueprint 'corrigir_bp' importado com sucesso.")
+
+# Registra o blueprint *depois* que 'app' foi criado e configurado.
+app.register_blueprint(corrigir_bp)
+print("DEBUG: Blueprint 'corrigir_bp' registrado com sucesso.")
 
 # ===========================================================
 # 🚀 ROTAS DA API
@@ -96,19 +105,19 @@ def get_gabarito_avaliacao(avaliacao_id):
 def salvar_correcao_omr():
     if not request.is_json:
         return jsonify({'erro': 'Formato inválido. Envie JSON.'}), 400
-    
+
     dados = request.get_json()
-    
+
     # Tenta pegar os IDs direto (o ideal), senão usa os nomes (fallback)
     id_aluno = dados.get('id_aluno')
     id_avaliacao = dados.get('id_avaliacao', 1) # Se não enviar, usa 1 como padrão
     nome_aluno = dados.get('nome', '')
     turma_nome = dados.get('turma', '')
     nota_final = float(dados.get('nota_final', 0.0))
-    
+
     # NOVO: Lista de respostas detalhadas que o celular deve enviar
     detalhes_respostas = dados.get('detalhes_respostas', [])
-    
+
     try:
         # Se o ID do aluno não veio direto, busca pelo nome (para não quebrar seu app atual)
         if not id_aluno:
@@ -116,17 +125,17 @@ def salvar_correcao_omr():
             if not resp_turma.data:
                 return jsonify({"sucesso": False, "erro": f"Turma '{turma_nome}' não encontrada"}), 404
             id_turma = resp_turma.data[0]['id']
-            
+
             resp_aluno = supabase.table("alunos").select("id").eq("nome", nome_aluno).eq("id_turma", id_turma).execute()
             if not resp_aluno.data:
                 return jsonify({"sucesso": False, "erro": f"Aluno '{nome_aluno}' não encontrado"}), 404
             id_aluno = resp_aluno.data[0]['id']
-        
+
         nivel = "Abaixo do Básico"
         if nota_final >= 8: nivel = "Avançado"
         elif nota_final >= 6: nivel = "Adequado"
-        elif nota_final >= 4: nivel = "Bás"
-        
+        elif nota_final >= 4: nivel = "Básico" # Corrigido typo: "Bás" para "Básico"
+
         # 1. SALVAR RESULTADO FINAL (Já fazia isso)
         supabase.table("resultados").insert({
             "id_aluno": id_aluno,
@@ -149,9 +158,9 @@ def salvar_correcao_omr():
                     "correta": item.get('correta', False)
                 }).execute()
             print("✅ Respostas detalhadas salvas com sucesso!")
-        
+
         return jsonify({'sucesso': True, 'mensagem': f'Nota {round(nota_final)} e respostas gravadas com sucesso!'}), 200
-        
+
     except Exception as e:
         print(f"❌ ERRO AO SALVAR: {e}")
         return jsonify({'sucesso': False, 'erro': str(e)}), 500
@@ -229,7 +238,7 @@ if __name__ == '__main__':
     # O Render define automaticamente a variável PORT.
     # O valor padrão é 10000, mas é melhor deixar o ambiente definir.
     # Não defina host='127.0.0.1', use '0.0.0.0' como exigido.
-    port = int(os.environ.get("PORT", 10000)) # Alterado o fallback para 10000
+    port = int(os.environ.get("PORT", 10000))
     print(f"📡 Servidor rodando na porta: {port} (host: 0.0.0.0)")
     print(f"   Acessível em: http://0.0.0.0:{port}")
 
