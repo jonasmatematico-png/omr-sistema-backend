@@ -128,9 +128,9 @@ def corrigir():
             'nivel_saeb': nivel_saeb,
             'devolutiva': f"Acertou {acertos} de {total_questoes} questões",
             'acertos_basico': acertos_basico,
-            'acertos_intermediarios': acertos_intermediarios,
-            'acertos_avancados': acertos_avancados,
-            'porcentual_acertos': round(porcentual_acertos, 2),
+            'acertos_intermediarios': acertos_intermediario,
+            'acertos_avancados': acertos_avancado,
+            'porcentual_acertos': round(porcentual_acerto, 2),
             'data_correcao': datetime.now().isoformat()
         }, on_conflict="id_avaliacao,id_aluno").execute()
         print("✅ Resultado final salvo/atualizado com sucesso!")
