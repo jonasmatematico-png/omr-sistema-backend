@@ -129,7 +129,7 @@ def corrigir():
             'devolutiva': f"Acertou {acertos} de {total_questoes} questões",
             'acertos_basico': acertos_basico,
             'acertos_intermediario': acertos_intermediarios,
-            'acertos_avancado': acertos_avancado,
+            'acertos_avancado': acertos_avancados,
             'porcentual_acerto': round(porcentual_acerto, 2),
             'data_correcao': datetime.now().isoformat()
         }, on_conflict="id_avaliacao,id_aluno").execute()
