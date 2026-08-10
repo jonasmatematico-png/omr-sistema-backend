@@ -77,8 +77,8 @@ def corrigir():
         
         # Conta por nível (SAEB)
         acertos_basico = 0  # Aqui você ajusta conforme seus descritores
-        acertos_intermediarios = 0
-        acertos_avancados = 0
+        acertos_intermediario = 0
+        acertos_avancado = 0
         
         # Determina nível SAEB
         if nota_final >= 7:
@@ -88,7 +88,7 @@ def corrigir():
         else:
             nivel_saeb = "Básico"
         
-        porcentual_acertos = (acertos / total_questoes * 100) if total_questoes > 0 else 0
+        percentual_acerto = (acertos / total_questoes * 100) if total_questoes > 0 else 0
 
         # 🔹 6. DEBUG: Exibe o que está sendo salvo
         print(f"DEBUG: id_aluno={id_aluno}, id_avaliacao={id_avaliacao}")
@@ -128,9 +128,9 @@ def corrigir():
             'nivel_saeb': nivel_saeb,
             'devolutiva': f"Acertou {acertos} de {total_questoes} questões",
             'acertos_basico': acertos_basico,
-            'acertos_intermediario': acertos_intermediarios,
-            'acertos_avancado': acertos_avancados,
-            'porcentual_acerto': round(porcentual_acertos, 2),
+            'acertos_intermediario': acertos_intermediario,
+            'acertos_avancado': acertos_avancado,
+            'percentual_acerto': round(percentual_acerto, 2),
             'data_correcao': datetime.now().isoformat()
         }, on_conflict="id_avaliacao,id_aluno").execute()
         print("✅ Resultado final salvo/atualizado com sucesso!")
