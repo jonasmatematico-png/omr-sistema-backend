@@ -227,6 +227,27 @@ def salvar_gabarito():
         traceback.print_exc() # Isso vai mostrar a linha exata do erro no terminal
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
+    # ==========================================================
+# 📸 ROTA PARA BAIXAR FOTOS DE DEBUG
+# ==========================================================
+@app.route('/debug/<filename>', methods=['GET'])
+def get_debug_image(filename):
+    import os
+    filepath = os.path.join('uploads', filename)
+    if os.path.exists(filepath):
+        from flask import send_file
+        return send_file(filepath, mimetype='image/jpeg')
+    return jsonify({"erro": f"Arquivo {filename} não encontrado"}), 404
+
+@app.route('/debug/lista', methods=['GET'])
+def list_debug_images():
+    import os
+    if not os.path.exists('uploads'):
+        return jsonify({"arquivos": []})
+    arquivos = [f for f in os.listdir('uploads') if f.endswith('.jpg')]
+    arquivos.sort(reverse=True)
+    return jsonify({"arquivos": arquivos})
+
 # ==========================================================
 # 🏁 INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO)
 # ==========================================================
