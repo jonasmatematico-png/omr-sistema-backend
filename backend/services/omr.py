@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import os
 import traceback
+import datetime
 
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
@@ -68,10 +69,11 @@ def esconder_qr_code(image):
             debug_img = image.copy()
             cv2.rectangle(debug_img, (x_min, y_min), (x_max, y_max), (0, 0, 255), 3)
             try:
-                cv2.imwrite(f'uploads/debug_qr_antes_{timestamp}.jpg', debug_img)
+                upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'uploads')
+                cv2.imwrite(os.path.join(upload_dir, 'debug_qr_antes.jpg'), debug_img)
                 print(f"📸 Debug salvo: debug_qr_antes.jpg (QR em vermelho)")
-            except:
-                pass
+            except Exception as e:
+                print(f"⚠️ Não conseguiu salvar debug_qr_antes: {e}")
             
             # Pinta de branco a região do QR
             cv2.rectangle(image, (x_min, y_min), (x_max, y_max), (255, 255, 255), -1)
@@ -115,12 +117,11 @@ def corrigir_orientacao(caminho_imagem):
 
 def processar_imagem(caminho_imagem, gabarito_esperado):
 
-    if not os.path.exists('uploads'):
-        os.makedirs('uploads')
-
-    # Cria um ID único baseado na data/hora para não sobrescrever
-    import datetime
-    timestamp = datetime.datetime.now().strftime("%H%M%S")
+    # Garante que salva na mesma pasta que o corrigir.py usa
+    upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'uploads')
+    if not os.path.exists(upload_dir):
+        os.makedirs(upload_dir)
+    print(f"📁 Pasta de uploads: {upload_dir}")
 
     try:
         # 🔧 Garante que o gabarito tenha sempre 10 posições (evita break prematuro)
@@ -260,7 +261,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
             print("6️⃣ Padronizando tamanho para 800x1000...")
             imagem_para_ler = cv2.resize(warped, (800, 1000))
 
-            cv2.imwrite(f'uploads/debug_planificada_{timestamp}.jpg', imagem_para_ler)
+            cv2.imwrite(os.path.join(upload_dir, 'debug_planificada.jpg'), imagem_para_ler)
             print("✅ SUCESSO! Imagem planificada e salva!")
 
         else:
@@ -268,7 +269,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
             print("⚠️ Pulando planificação.")
             print("📐 Redimensionando para 800x1000 mesmo sem planificação...")
             imagem_para_ler = cv2.resize(imagem_para_ler, (800, 1000))
-            cv2.imwrite(f'uploads/debug_planificada_{timestamp}.jpg', imagem_para_ler)
+            cv2.imwrite(os.path.join(upload_dir, 'debug_planificada.jpg'), imagem_para_ler)
 
         # ── ETAPA 5: Posições das questões ──
         POSICOES_QUESTOES = [
@@ -339,7 +340,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
                 respostas_detectadas.append('')
                 print(f"   ⚠️ Q{idx_q+1}: Não detectado (brilho: {round(menor_brilho,1)})")
 
-        cv2.imwrite(f'uploads/debug_leitura_final_{timestamp}.jpg', debug_img)
+        cv2.imwrite(os.path.join(upload_dir, 'debug_leitura_final.jpg'), debug_img)
 
         # Garante 10 respostas
         while len(respostas_detectadas) < len(gabarito_esperado):
