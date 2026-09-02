@@ -1,8 +1,6 @@
 # services/omr.py
 # OMR Sistema 2.0 - Versão estável + Capa de Invisibilidade para QR (com proteção anti-alucinação)
 
-from sqlite3.dbapi2 import Timestamp
-
 import cv2
 import numpy as np
 import os
@@ -70,7 +68,7 @@ def esconder_qr_code(image):
             debug_img = image.copy()
             cv2.rectangle(debug_img, (x_min, y_min), (x_max, y_max), (0, 0, 255), 3)
             try:
-                cv2.imwrite(f'uploads/debug_qr_antes_{Timestamp}.jpg', debug_img)
+                cv2.imwrite(f'uploads/debug_qr_antes_{timestamp}.jpg', debug_img)
                 print(f"📸 Debug salvo: debug_qr_antes.jpg (QR em vermelho)")
             except:
                 pass
