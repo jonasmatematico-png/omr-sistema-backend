@@ -1,5 +1,5 @@
 # services/omr.py
-# OMR Sistema 2.0 - Versão estável
+# OMR Sistema 2.0 - Versão estável + Capa de Invisibilidade para QR
 
 import cv2
 import numpy as np
@@ -15,6 +15,34 @@ def order_points(pts):
     rect[1] = pts[np.argmin(diff)]
     rect[3] = pts[np.argmax(diff)]
     return rect
+
+def esconder_qr_code(image):
+    """
+    Detecta o QR Code na imagem e pinta a região de branco,
+    evitando que ele interfira na leitura das bolinhas.
+    """
+    try:
+        detector = cv2.QRCodeDetector()
+        data, bbox, _ = detector.detectAndDecode(image)
+        
+        if bbox is not None and len(bbox) > 0:
+            print(f"🔍 QR Code detectado! Escondendo a região...")
+            
+            # Converte os pontos para inteiros
+            pts = bbox.astype(np.int32).reshape((-1, 1, 2))
+            
+            # Pinta a região do QR de BRANCO
+            cv2.fillPoly(image, [pts], (255, 255, 255))
+            
+            print("✅ QR Code escondido com sucesso!")
+            return True
+        else:
+            print("ℹ️ Nenhum QR Code detectado na imagem.")
+            return False
+            
+    except Exception as e:
+        print(f"⚠️ Erro ao detectar QR: {e}")
+        return False
 
 def corrigir_orientacao(caminho_imagem):
     """
@@ -65,17 +93,67 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
         if image is None:
             raise Exception("Não conseguiu ler o arquivo de imagem.")
 
-        # ── ETAPA 2: Redimensionar se muito grande ──
-        h_orig, w_orig = image.shape[:2]
-        print(f"📐 Tamanho original: {w_orig}x{h_orig}")
+        # ── NOVA ETAPA: Esconder QR Code ──
+        print("🔍 Procurando QR Code na imagem...")
+        esconder_qr_code(image)
 
-        MAX_LARGURA = 1200
-        if w_orig > MAX_LARGURA:
-            escala       = MAX_LARGURA / w_orig
-            nova_largura = int(w_orig * escala)
-            nova_altura  = int(h_orig * escala)
-            image        = cv2.resize(image, (nova_largura, nova_altura))
-            print(f"📐 Redimensionado para: {nova_largura}x{nova_altura}")
+        # ── ETAPA 2: Redimensionar se muito grande ──
+        def esconder_qr_code(image):
+    """
+    Detecta o QR Code na imagem e pinta uma região AMPLA de branco,
+    evitando que ele interfira na leitura das bolinhas.
+    Tentamos 3 estratégias para garantir a detecção.
+    """
+    try:
+        detector = cv2.QRCodeDetector()
+        bbox = None
+        
+        # Estratégia 1: imagem colorida original
+        data, bbox, _ = detector.detectAndDecode(image)
+        
+        # Estratégia 2: imagem em cinza
+        if bbox is None:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            data, bbox, _ = detector.detectAndDecode(gray)
+        
+        # Estratégia 3: imagem com mais contraste
+        if bbox is None:
+            gray2 = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            contrast = clahe.apply(gray2)
+            data, bbox, _ = detector.detectAndDecode(contrast)
+        
+        if bbox is not None and len(bbox) > 0:
+            print(f"🔍 QR Code detectado! Escondendo a região...")
+            
+            # Converte os pontos do QR para inteiros
+            pts = bbox.astype(np.int32)
+            
+            # Calcula o retângulo delimitador AMPLIADO
+            x_min = int(max(0, np.min(pts[:, 0]) - 30))  # 30px de margem
+            y_min = int(max(0, np.min(pts[:, 1]) - 30))
+            x_max = int(min(image.shape[1], np.max(pts[:, 0]) + 30))
+            y_max = int(min(image.shape[0], np.max(pts[:, 1]) + 30))
+            
+            # Pinta um retângulo BRANCO BEM GRANDE sobre o QR
+            cv2.rectangle(image, (x_min, y_min), (x_max, y_max), (255, 255, 255), -1)
+            
+            print(f"✅ QR Code escondido! Região: ({x_min},{y_min}) até ({x_max},{y_max})")
+            
+            # Salva debug para conferência visual
+            try:
+                cv2.imwrite('uploads/debug_qr_escondido.jpg', image)
+            except:
+                pass
+            
+            return True
+        else:
+            print("ℹ️ Nenhum QR Code detectado na imagem.")
+            return False
+            
+    except Exception as e:
+        print(f"⚠️ Erro ao detectar QR: {e}")
+        return False
 
         # ── ETAPA 3: Achar marcadores ──
         print("2️⃣ Processando para achar marcadores...")
@@ -273,4 +351,4 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
     except Exception as e:
         print(f"\n❌ ERRO CRÍTICO NA EXECUÇÃO:")
         traceback.print_exc()
-        return [''] * len(gabarito_esperado)
+        return [''] * len(gabarito_esperado).
