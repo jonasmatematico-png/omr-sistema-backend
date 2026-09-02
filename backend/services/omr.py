@@ -1,5 +1,5 @@
 # services/omr.py
-# OMR Sistema 2.0 - Versão estável + Capa de Invisibilidade para QR
+# OMR Sistema 2.0 - Versão estável + Capa de Invisibilidade para QR (com proteção anti-alucinação)
 
 import cv2
 import numpy as np
@@ -18,9 +18,9 @@ def order_points(pts):
 
 def esconder_qr_code(image):
     """
-    Detecta o QR Code na imagem e pinta uma região MUITO AMPLA de branco,
-    evitando que ele interfira na leitura das bolinhas.
-    Também salva uma imagem de debug mostrando a região detectada.
+    Detecta o QR Code e pinta de branco — MAS só se a região for
+    de tamanho plausível (um QR real é pequeno). Se o detector
+    'alucinar' uma região gigante, ignoramos para não estragar a prova.
     """
     try:
         detector = cv2.QRCodeDetector()
@@ -42,17 +42,29 @@ def esconder_qr_code(image):
             data, bbox, _ = detector.detectAndDecode(contrast)
         
         if bbox is not None and len(bbox) > 0:
-            print(f"🔍 QR Code detectado!")
-            
             pts = bbox.astype(np.int32)
             
-            # MARGEM AMPLA: 80 pixels em cada direção
-            x_min = int(max(0, np.min(pts[:, 0]) - 80))
-            y_min = int(max(0, np.min(pts[:, 1]) - 80))
-            x_max = int(min(image.shape[1], np.max(pts[:, 0]) + 80))
-            y_max = int(min(image.shape[0], np.max(pts[:, 1]) + 80))
+            h_img, w_img = image.shape[:2]
             
-            # Salva imagem de DEBUG antes de pintar (QR destacado em vermelho)
+            # Largura e altura da região detectada
+            w_qr = np.max(pts[:, 0]) - np.min(pts[:, 0])
+            h_qr = np.max(pts[:, 1]) - np.min(pts[:, 1])
+            
+            # 🛡️ PROTEÇÃO: um QR real não ocupa mais de 25% da largura
+            # nem 35% da altura. Se for maior, é alucinação → ignora!
+            if w_qr > w_img * 0.25 or h_qr > h_img * 0.35:
+                print(f"⚠️ Região detectada GRANDE DEMAIS ({w_qr}x{h_qr}) — ignorando (provável alucinação).")
+                return False
+            
+            print(f"🔍 QR Code detectado! Tamanho: {w_qr}x{h_qr}")
+            
+            # Margem de 40px (segura, sem exagero)
+            x_min = int(max(0, np.min(pts[:, 0]) - 40))
+            y_min = int(max(0, np.min(pts[:, 1]) - 40))
+            x_max = int(min(w_img, np.max(pts[:, 0]) + 40))
+            y_max = int(min(h_img, np.max(pts[:, 1]) + 40))
+            
+            # Debug: destaca o QR em vermelho antes de apagar
             debug_img = image.copy()
             cv2.rectangle(debug_img, (x_min, y_min), (x_max, y_max), (0, 0, 255), 3)
             try:
@@ -61,9 +73,8 @@ def esconder_qr_code(image):
             except:
                 pass
             
-            # Pinta de branco a região AMPLA
+            # Pinta de branco a região do QR
             cv2.rectangle(image, (x_min, y_min), (x_max, y_max), (255, 255, 255), -1)
-            
             print(f"✅ QR escondido! Região: ({x_min},{y_min}) até ({x_max},{y_max})")
             return True
         else:
