@@ -307,8 +307,8 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
                     menor_brilho     = brilho
                     melhor_opcao_idx = i
 
-            # Limiar original que funcionava bem
-            if menor_brilho < 215:
+            # Limiar ajustado para detectar bolinhas mais claras
+            if menor_brilho < 235:
                 resp = alternativas_map[melhor_opcao_idx]
                 respostas_detectadas.append(resp)
                 print(f"   ✅ Q{idx_q+1}: '{resp}' (brilho: {round(menor_brilho,1)})")
