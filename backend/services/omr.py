@@ -18,9 +18,9 @@ def order_points(pts):
 
 def esconder_qr_code(image):
     """
-    Detecta o QR Code na imagem e pinta uma região AMPLA de branco,
+    Detecta o QR Code na imagem e pinta uma região MUITO AMPLA de branco,
     evitando que ele interfira na leitura das bolinhas.
-    Tentamos 3 estratégias para garantir a detecção.
+    Também salva uma imagem de debug mostrando a região detectada.
     """
     try:
         detector = cv2.QRCodeDetector()
@@ -42,24 +42,32 @@ def esconder_qr_code(image):
             data, bbox, _ = detector.detectAndDecode(contrast)
         
         if bbox is not None and len(bbox) > 0:
-            print(f"🔍 QR Code detectado! Escondendo a região...")
+            print(f"🔍 QR Code detectado!")
             
-            # Converte os pontos do QR para inteiros
             pts = bbox.astype(np.int32)
             
-            # Calcula o retângulo delimitador AMPLIADO
-            x_min = int(max(0, np.min(pts[:, 0]) - 30))
-            y_min = int(max(0, np.min(pts[:, 1]) - 30))
-            x_max = int(min(image.shape[1], np.max(pts[:, 0]) + 30))
-            y_max = int(min(image.shape[0], np.max(pts[:, 1]) + 30))
+            # MARGEM AMPLA: 80 pixels em cada direção
+            x_min = int(max(0, np.min(pts[:, 0]) - 80))
+            y_min = int(max(0, np.min(pts[:, 1]) - 80))
+            x_max = int(min(image.shape[1], np.max(pts[:, 0]) + 80))
+            y_max = int(min(image.shape[0], np.max(pts[:, 1]) + 80))
             
-            # Pinta um retângulo BRANCO BEM GRANDE sobre o QR
+            # Salva imagem de DEBUG antes de pintar (QR destacado em vermelho)
+            debug_img = image.copy()
+            cv2.rectangle(debug_img, (x_min, y_min), (x_max, y_max), (0, 0, 255), 3)
+            try:
+                cv2.imwrite('uploads/debug_qr_antes.jpg', debug_img)
+                print(f"📸 Debug salvo: debug_qr_antes.jpg (QR em vermelho)")
+            except:
+                pass
+            
+            # Pinta de branco a região AMPLA
             cv2.rectangle(image, (x_min, y_min), (x_max, y_max), (255, 255, 255), -1)
             
-            print(f"✅ QR Code escondido! Região: ({x_min},{y_min}) até ({x_max},{y_max})")
+            print(f"✅ QR escondido! Região: ({x_min},{y_min}) até ({x_max},{y_max})")
             return True
         else:
-            print("ℹ️ Nenhum QR Code detectado na imagem.")
+            print("ℹ️ Nenhum QR Code detectado.")
             return False
             
     except Exception as e:
@@ -103,7 +111,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
         # 🔧 Garante que o gabarito tenha sempre 10 posições (evita break prematuro)
         gabarito_esperado = list(gabarito_esperado) + [''] * (10 - len(gabarito_esperado))
         gabarito_esperado = gabarito_esperado[:10]
-        print("🚨🚨🚨 OMR.PY - RECORTE CIRÚRGICO NOS CANTOS EXTERNOS 🚨🚨🚨")
+        print("🚨🚨🚨 OMR.PY - RECORTE CIRÚRGICO NOS CANTOS EXTERNOS 🚨🚨")
 
         # ── ETAPA 0: Corrigir orientação EXIF ──
         print("0️⃣ Corrigindo orientação da foto...")
