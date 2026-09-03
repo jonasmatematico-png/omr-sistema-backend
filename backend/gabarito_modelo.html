@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Gabarito OMR - 3 por A4 - 30 Questões</title>
+<style>
+    @page { size: A4 portrait; margin: 5mm; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, Helvetica, sans-serif; background: #eee; padding: 10px; }
+
+    .folha {
+        width: 200mm;
+        height: 286mm;
+        margin: 0 auto;
+        background: white;
+        padding: 0.5mm 2mm;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .titulo-folha { text-align: center; font-size: 7px; color: #999; height: 3mm; line-height: 3mm; }
+
+    .gabarito {
+        position: relative;
+        height: 91.5mm;
+        border: 0.5mm solid #333;
+        padding: 1.5mm 4mm 1mm 4mm;
+        overflow: hidden;
+    }
+
+    .marcador { position: absolute; width: 6mm; height: 6mm; background: #000; }
+    .marcador.tl { top: -0.5mm; left: -0.5mm; }
+    .marcador.tr { top: -0.5mm; right: -0.5mm; }
+    .marcador.bl { bottom: -0.5mm; left: -0.5mm; }
+    .marcador.br { bottom: -0.5mm; right: -0.5mm; }
+
+    .cabecalho { display: flex; gap: 3mm; margin-bottom: 1.2mm; padding-bottom: 0.8mm; border-bottom: 0.3mm dashed #999; }
+    .qr-placeholder {
+        width: 16mm; height: 16mm; border: 0.5mm solid #333; background: #fafafa;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 7px; font-weight: bold; text-align: center; color: #666; flex-shrink: 0;
+    }
+    .campos { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 1mm 4mm; font-size: 8.5px; }
+    .campo { display: flex; align-items: baseline; gap: 1.5mm; }
+    .campo label { font-weight: bold; white-space: nowrap; }
+    .campo .linha { flex: 1; border-bottom: 0.3mm solid #333; height: 4mm; }
+    .campo-full { grid-column: 1 / -1; }
+
+    .grade { display: grid; grid-template-columns: 1fr 1fr; gap: 0 6mm; }
+    .coluna-header { display: grid; grid-template-columns: 7mm 1fr 1fr 1fr 1fr; font-size: 8px; font-weight: bold; text-align: center; height: 3.5mm; color: #333; }
+    .questao { display: grid; grid-template-columns: 7mm 1fr 1fr 1fr 1fr; align-items: center; height: 4.4mm; border-bottom: 0.2mm dotted #ccc; }
+    .q-numero { font-size: 8px; font-weight: bold; text-align: center; color: #333; }
+    .bolinha { width: 3.8mm; height: 3.8mm; border: 0.5mm solid #333; border-radius: 50%; margin: 0 auto; }
+
+    .linha-corte { text-align: center; font-size: 7px; color: #999; height: 3mm; line-height: 3mm; }
+
+    @media print { body { background: white; padding: 0; } }
+</style>
+</head>
+<body>
+
+<div class="folha" id="folha"></div>
+
+<script>
+    function criarQuestoes(inicio, fim) {
+        let html = '';
+        for (let n = inicio; n <= fim; n++) {
+            const num = String(n).padStart(2, '0');
+            html += `<div class="questao"><span class="q-numero">${num}</span><div class="bolinha"></div><div class="bolinha"></div><div class="bolinha"></div><div class="bolinha"></div></div>`;
+        }
+        return html;
+    }
+
+    function criarGabarito() {
+        return `
+        <div class="gabarito">
+            <div class="marcador tl"></div><div class="marcador tr"></div>
+            <div class="marcador bl"></div><div class="marcador br"></div>
+            <div class="cabecalho">
+                <div class="qr-placeholder">QR CODE<br>(App)</div>
+                <div class="campos">
+                    <div class="campo campo-full"><label>Nome:</label><div class="linha"></div></div>
+                    <div class="campo"><label>Turma:</label><div class="linha"></div></div>
+                    <div class="campo"><label>N°:</label><div class="linha"></div></div>
+                    <div class="campo campo-full"><label>Avaliação:</label><div class="linha"></div></div>
+                </div>
+            </div>
+            <div class="grade">
+                <div class="coluna">
+                    <div class="coluna-header"><span></span><span>A</span><span>B</span><span>C</span><span>D</span></div>
+                    ${criarQuestoes(1, 15)}
+                </div>
+                <div class="coluna">
+                    <div class="coluna-header"><span></span><span>A</span><span>B</span><span>C</span><span>D</span></div>
+                    ${criarQuestoes(16, 30)}
+                </div>
+            </div>
+        </div>`;
+    }
+
+    document.getElementById('folha').innerHTML = `
+        <div class="titulo-folha">GABARITO OMR — 30 QUESTÕES — 3 POR FOLHA A4</div>
+        ${criarGabarito()}
+        <div class="linha-corte">✂️ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─......</div>
+        ${criarGabarito()}
+        <div class="linha-corte">✂️ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─......</div>
+        ${criarGabarito()}
+    `;
+</script>
+
+</body>
+</html>
