@@ -281,18 +281,18 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
             imagem_para_ler = cv2.resize(imagem_para_ler, (800, 1000))
             cv2.imwrite(os.path.join(upload_dir, 'debug_planificada.jpg'), imagem_para_ler)
 
-        # ── ETAPA 5: Posições das questões ──
+        # ── ETAPA 5: Posições das questões (RECALIBRADO para gabarito atual) ──
         POSICOES_QUESTOES = [
-            {'x': 173, 'y':  28, 'w': 468, 'h': 70},  # Q1
-            {'x': 170, 'y': 123, 'w': 486, 'h': 67},  # Q2
-            {'x': 158, 'y': 231, 'w': 498, 'h': 59},  # Q3
-            {'x': 161, 'y': 328, 'w': 500, 'h': 62},  # Q4
-            {'x': 170, 'y': 426, 'w': 483, 'h': 64},  # Q5
-            {'x': 166, 'y': 531, 'w': 495, 'h': 62},  # Q6
-            {'x': 165, 'y': 631, 'w': 496, 'h': 59},  # Q7
-            {'x': 165, 'y': 736, 'w': 493, 'h': 65},  # Q8
-            {'x': 170, 'y': 831, 'w': 483, 'h': 59},  # Q9
-            {'x': 153, 'y': 931, 'w': 500, 'h': 62},  # Q10
+            {'x': 180, 'y': 270, 'w': 460, 'h': 55},  # Q1
+            {'x': 180, 'y': 340, 'w': 460, 'h': 55},  # Q2
+            {'x': 180, 'y': 410, 'w': 460, 'h': 55},  # Q3
+            {'x': 180, 'y': 480, 'w': 460, 'h': 55},  # Q4
+            {'x': 180, 'y': 550, 'w': 460, 'h': 55},  # Q5
+            {'x': 180, 'y': 620, 'w': 460, 'h': 55},  # Q6
+            {'x': 180, 'y': 690, 'w': 460, 'h': 55},  # Q7
+            {'x': 180, 'y': 760, 'w': 460, 'h': 55},  # Q8
+            {'x': 180, 'y': 830, 'w': 460, 'h': 55},  # Q9
+            {'x': 180, 'y': 900, 'w': 460, 'h': 55},  # Q10
         ]
 
         # ── ETAPA 6: Leitura das respostas ──
