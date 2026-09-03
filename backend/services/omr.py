@@ -247,14 +247,30 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
             # Divide em 10 linhas iguais
             altura_linha = altura_grade / 10
             
+            # Ajustes manuais por questão (em pixels)
+            # Formato: (ajuste_x, ajuste_y, ajuste_largura, ajuste_altura)
+            AJUSTES_MANUAIS = [
+                (0, 0, 0, 0),      # Q1
+                (0, 0, 0, 0),      # Q2
+                (0, -5, 0, 0),     # Q3: sobe 5px
+                (0, -8, 0, 0),     # Q4: sobe 8px
+                (0, -12, 0, 0),    # Q5: sobe 12px
+                (0, -15, 0, 0),    # Q6: sobe 15px
+                (0, -18, 0, 0),    # Q7: sobe 18px
+                (0, -22, 0, 0),    # Q8: sobe 22px
+                (0, -25, 0, 0),    # Q9: sobe 25px
+                (0, -28, 0, 0),    # Q10: sobe 28px
+            ]
+            
             POSICOES_QUESTOES = []
             for i in range(10):
                 y = int(y_inicio + i * altura_linha)
+                adj_x, adj_y, adj_w, adj_h = AJUSTES_MANUAIS[i]
                 POSICOES_QUESTOES.append({
-                    'x': x_inicio,
-                    'y': y,
-                    'w': largura_grade,
-                    'h': int(altura_linha)
+                    'x': x_inicio + adj_x,
+                    'y': y + adj_y,
+                    'w': largura_grade + adj_w,
+                    'h': int(altura_linha) + adj_h
                 })
             
             # Usa a imagem original (não redimensiona pra 800x1000)
