@@ -117,8 +117,11 @@ def corrigir_orientacao(caminho_imagem):
 
 def processar_imagem(caminho_imagem, gabarito_esperado):
 
-    # Garante que salva na mesma pasta que o corrigir.py usa
-    upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'uploads')
+    # Caminho fixo que funciona no Render e localmente
+    upload_dir = '/opt/render/project/src/backend/uploads'
+    if not os.path.exists(upload_dir):
+        # Fallback para ambiente local (seu PC)
+        upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'uploads')
     if not os.path.exists(upload_dir):
         os.makedirs(upload_dir)
     print(f"📁 Pasta de uploads: {upload_dir}")
