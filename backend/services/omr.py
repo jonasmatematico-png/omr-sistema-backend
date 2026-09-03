@@ -253,7 +253,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
                 (0, 0, 0, 0),      # Q1
                 (0, 0, 0, 0),      # Q2
                 (0, 0, 0, 0),     # Q3: sobe 5px
-                (0, -15,0, 0),     # Q4: sobe 8px
+                (0, -35,0, 0),     # Q4: sobe 8px
                 (0, -30, 0, 0),    # Q5: sobe 12px
                 (0, -15, 0, 0),    # Q6: sobe 15px
                 (0, -18, 0, 0),    # Q7: sobe 18px
