@@ -1,5 +1,5 @@
 # services/omr.py
-# OMR Sistema 2.0 - Versão estável + Capa de Invisibilidade para QR (com proteção anti-alucinação)
+# OMR Sistema 2.0 - Versão estável + Capa de Invisibilidade para QR (com proteção anti-alucinação + pula planificação se QR detectado)
 
 import cv2
 import numpy as np
@@ -22,6 +22,7 @@ def esconder_qr_code(image):
     Detecta o QR Code e pinta de branco — MAS só se a região for
     de tamanho plausível (um QR real é pequeno). Se o detector
     'alucinar' uma região gigante, ignoramos para não estragar a prova.
+    Retorna True se o QR foi detectado e escondido com sucesso.
     """
     try:
         detector = cv2.QRCodeDetector()
@@ -69,7 +70,9 @@ def esconder_qr_code(image):
             debug_img = image.copy()
             cv2.rectangle(debug_img, (x_min, y_min), (x_max, y_max), (0, 0, 255), 3)
             try:
-                upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'uploads')
+                upload_dir = '/opt/render/project/src/backend/uploads'
+                if not os.path.exists(upload_dir):
+                    upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'uploads')
                 cv2.imwrite(os.path.join(upload_dir, 'debug_qr_antes.jpg'), debug_img)
                 print(f"📸 Debug salvo: debug_qr_antes.jpg (QR em vermelho)")
             except Exception as e:
@@ -130,7 +133,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
         # 🔧 Garante que o gabarito tenha sempre 10 posições (evita break prematuro)
         gabarito_esperado = list(gabarito_esperado) + [''] * (10 - len(gabarito_esperado))
         gabarito_esperado = gabarito_esperado[:10]
-        print("🚨🚨🚨 OMR.PY - RECORTE CIRÚRGICO NOS CANTOS EXTERNOS 🚨🚨")
+        print("🚨🚨 OMR.PY - RECORTE CIRÚRGICO NOS CANTOS EXTERNOS 🚨🚨")
 
         # ── ETAPA 0: Corrigir orientação EXIF ──
         print("0️⃣ Corrigindo orientação da foto...")
@@ -144,7 +147,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
 
         # ── NOVA ETAPA: Esconder QR Code ──
         print("🔍 Procurando QR Code na imagem...")
-        esconder_qr_code(image)
+        qr_foi_escondido = esconder_qr_code(image)
 
         # ── ETAPA 2: Redimensionar se muito grande ──
         h_orig, w_orig = image.shape[:2]
@@ -189,8 +192,9 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
 
         imagem_para_ler = image
 
-        # ── ETAPA 4: Planificação ──
-        if len(possible_markers) >= 4:
+        # ── ETAPA 4: Planificação (PULADA se QR foi detectado) ──
+        # Se o QR foi escondido com sucesso, a imagem já está boa — pula a planificação
+        if not qr_foi_escondido and len(possible_markers) >= 4:
             print("3️⃣ Selecionando os 4 maiores marcadores...")
             possible_markers.sort(key=lambda m: m['area'], reverse=True)
             top_4 = possible_markers[:4]
@@ -268,8 +272,11 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
             print("✅ SUCESSO! Imagem planificada e salva!")
 
         else:
-            print(f"⚠️ Apenas {len(possible_markers)} marcadores.")
-            print("⚠️ Pulando planificação.")
+            if qr_foi_escondido:
+                print("🔲 QR detectado — pulando planificação (imagem já está boa)!")
+            else:
+                print(f"⚠️ Apenas {len(possible_markers)} marcadores.")
+                print("⚠️ Pulando planificação.")
             print("📐 Redimensionando para 800x1000 mesmo sem planificação...")
             imagem_para_ler = cv2.resize(imagem_para_ler, (800, 1000))
             cv2.imwrite(os.path.join(upload_dir, 'debug_planificada.jpg'), imagem_para_ler)
