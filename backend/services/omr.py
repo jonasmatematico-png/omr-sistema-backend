@@ -234,7 +234,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
             margem_y_topo = 25
             margem_y_base = 50  # Margem maior embaixo pra não sair da área
             
-            x_inicio = int(min(tl[0], bl[0])) + margem_x
+            x_inicio = int(min(tl[0], bl[0])) + margem_x + 10  # +10px pra direita
             x_fim = int(max(tr[0], br[0])) - margem_x
             y_inicio = int(min(tl[1], tr[1])) + margem_y_topo
             y_fim = int(max(bl[1], br[1])) - margem_y_base
@@ -253,8 +253,8 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
                 (0, 0, 0, 0),      # Q1
                 (0, 0, 0, 0),      # Q2
                 (0, -5, 0, 0),     # Q3: sobe 5px
-                (0, -25,-10, 0),     # Q4: sobe 8px
-                (0, -45, -10),    # Q5: sobe 12px
+                (0, -10,0, 0),     # Q4: sobe 8px
+                (0, -18, 0, 0),    # Q5: sobe 12px
                 (0, -15, 0, 0),    # Q6: sobe 15px
                 (0, -18, 0, 0),    # Q7: sobe 18px
                 (0, -22, 0, 0),    # Q8: sobe 22px
