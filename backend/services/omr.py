@@ -229,14 +229,15 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
             tl, tr, br, bl = marcadores
             
             # Define a área das questões com base nos marcadores
-            # Adiciona uma margem interna pra não pegar os próprios marcadores
-            margem_x = 30
-            margem_y = 20
+            # Margens ajustadas pra não pegar os marcadores nem sair da área
+            margem_x = 40
+            margem_y_topo = 25
+            margem_y_base = 50  # Margem maior embaixo pra não sair da área
             
             x_inicio = int(min(tl[0], bl[0])) + margem_x
             x_fim = int(max(tr[0], br[0])) - margem_x
-            y_inicio = int(min(tl[1], tr[1])) + margem_y
-            y_fim = int(max(bl[1], br[1])) - margem_y
+            y_inicio = int(min(tl[1], tr[1])) + margem_y_topo
+            y_fim = int(max(bl[1], br[1])) - margem_y_base
             
             largura_grade = x_fim - x_inicio
             altura_grade = y_fim - y_inicio
