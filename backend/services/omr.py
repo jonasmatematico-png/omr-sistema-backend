@@ -309,7 +309,11 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
                 respostas_detectadas.append('')
                 print(f"   ⚠️ Q{idx_q+1}: Não detectado (brilho: {round(menor_brilho,1)})")
 
-        cv2.imwrite(os.path.join(upload_dir, 'debug_leitura_final.jpg'), debug_img)
+        # Amplia a imagem em 150% pra facilitar a visualização dos detalhes
+        h_debug, w_debug = debug_img.shape[:2]
+        debug_ampliada = cv2.resize(debug_img, (int(w_debug * 1.5), int(h_debug * 1.5)))
+        cv2.imwrite(os.path.join(upload_dir, 'debug_leitura_final.jpg'), debug_ampliada)
+        print(f"📸 Debug ampliado salvo: {int(w_debug * 1.5)}x{int(h_debug * 1.5)}")
 
         while len(respostas_detectadas) < len(gabarito_esperado):
             respostas_detectadas.append('')
