@@ -1,24 +1,22 @@
 # services/omr.py
-# OMR Sistema 3.0 - Gabarito oficial 26 questões (4 colunas 7/7/7/5)
-# Detecção pelos 4 marcadores de canto + perspectiva normalizada
+# OMR Sistema 3.1 - Gabarito 26 questões + diagnóstico completo de marcadores
 
 import cv2
 import numpy as np
 import os
 import traceback
 
-# Tamanho do espaço normalizado (entre os 4 marcadores)
 TAM_NORM = (1000, 470)
 
 # ── CALIBRAÇÃO (no espaço normalizado 1000x470) ──
-COLUNAS_X = [76, 337, 599, 833]   # centro da bolinha A de cada coluna
-DX_BOLINHA = 37                   # distância entre centros A-B-C-D
-Y0 = 90                           # centro da 1ª linha
-DY_LINHA = 47.6                   # distância entre linhas
+COLUNAS_X = [76, 337, 599, 833]
+DX_BOLINHA = 37
+Y0 = 90
+DY_LINHA = 47.6
 QUESTOES_POR_COLUNA = [7, 7, 7, 5]
 
-JANELA = 14           # meia-janela de leitura (miolo da bolinha)
-LIMIAR_BRILHO = 200   # abaixo disso = bolinha pintada
+JANELA = 14
+LIMIAR_BRILHO = 200
 
 def ordem_pontos(pts):
     rect = np.zeros((4, 2), dtype="float32")
@@ -31,7 +29,6 @@ def ordem_pontos(pts):
     return rect
 
 def esconder_qr_code(image, upload_dir):
-    """Detecta o QR e pinta de branco (com proteção anti-alucinação)."""
     try:
         detector = cv2.QRCodeDetector()
         bbox = None
@@ -95,11 +92,11 @@ def corrigir_orientacao(caminho_imagem):
     except Exception as e:
         print(f"⚠️ Não foi possível corrigir orientação: {e}")
 
-def detectar_marcadores(image):
-    """Acha os 4 quadrados pretos dos cantos."""
+def detectar_marcadores(image, upload_dir):
+    """Acha os 4 quadrados pretos dos cantos e salva foto de diagnóstico."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, thresh = cv2.threshold(blurred, 60, 255, cv2.THRESH_BINARY_INV)
+    _, thresh = cv2.threshold(blurred, 80, 255, cv2.THRESH_BINARY_INV)
 
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -110,18 +107,42 @@ def detectar_marcadores(image):
         aspect = w / float(h) if h > 0 else 0
         solidez = area / (w * h) if w * h > 0 else 0
 
-        # quadrado sólido, bem preto, tamanho plausível
-        if 150 < area < 8000 and 0.6 < aspect < 1.4 and solidez > 0.8:
+        if 100 < area < 12000 and 0.6 < aspect < 1.4 and solidez > 0.7:
             candidatos.append((area, (x + w / 2, y + h / 2)))
 
     print(f"⬛ Candidatos a marcador: {len(candidatos)}")
 
+    # Foto de diagnóstico: TODOS os candidatos em vermelho
+    debug_img = image.copy()
+    for area, (cx, cy) in candidatos:
+        cv2.circle(debug_img, (int(cx), int(cy)), 14, (0, 0, 255), 2)
+
     if len(candidatos) < 4:
+        try:
+            cv2.imwrite(os.path.join(upload_dir, 'debug_marcadores.jpg'), debug_img)
+            print("📸 debug_marcadores.jpg salva (FALHOU — veja os vermelhos)")
+        except:
+            pass
         return None
 
     candidatos.sort(key=lambda c: c[0], reverse=True)
-    pts = np.array([c[1] for c in candidatos[:4]], dtype="float32")
-    return ordem_pontos(pts)
+    top4 = candidatos[:4]
+    pts = np.array([c[1] for c in top4], dtype="float32")
+    ordered = ordem_pontos(pts)
+
+    # Os 4 escolhidos em verde, numerados
+    for i, pt in enumerate(ordered):
+        cv2.circle(debug_img, (int(pt[0]), int(pt[1])), 14, (0, 255, 0), 3)
+        cv2.putText(debug_img, str(i + 1), (int(pt[0]) + 18, int(pt[1]) + 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+    try:
+        cv2.imwrite(os.path.join(upload_dir, 'debug_marcadores.jpg'), debug_img)
+        print("📸 debug_marcadores.jpg salva (verdes = os 4 escolhidos)")
+    except:
+        pass
+
+    return ordered
 
 def processar_imagem(caminho_imagem, gabarito_esperado):
 
@@ -135,20 +156,16 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
     try:
         gabarito_esperado = list(gabarito_esperado)
         n_q = min(len(gabarito_esperado), 26)
-        print(f"🚨 OMR 3.0 — GABARITO 26 QUESTÕES (4 COLUNAS) — lendo {n_q} 🚨")
+        print(f"🚨 OMR 3.1 — GABARITO 26 QUESTÕES — lendo {n_q} 🚨")
 
-        # ETAPA 0: orientação
         corrigir_orientacao(caminho_imagem)
 
-        # ETAPA 1: carregar
         image = cv2.imread(caminho_imagem)
         if image is None:
             raise Exception("Não conseguiu ler o arquivo de imagem.")
 
-        # ETAPA 2: esconder QR
         esconder_qr_code(image, upload_dir)
 
-        # ETAPA 3: limitar tamanho
         h_orig, w_orig = image.shape[:2]
         print(f"📐 Tamanho original: {w_orig}x{h_orig}")
         MAX_LARGURA = 1600
@@ -157,10 +174,11 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
             image = cv2.resize(image, (int(w_orig * escala), int(h_orig * escala)))
             print(f"📐 Redimensionado para: {image.shape[1]}x{image.shape[0]}")
 
-        # ETAPA 4: marcadores de canto
-        marcadores = detectar_marcadores(image)
+        marcadores = detectar_marcadores(image, upload_dir)
         if marcadores is None:
             print("❌ Não achou os 4 marcadores de canto!")
+            # Salva a foto mesmo assim, pra diagnóstico
+            cv2.imwrite(os.path.join(upload_dir, 'debug_leitura_final.jpg'), image)
             return [''] * len(gabarito_esperado)
 
         print("✅ 4 marcadores encontrados! Normalizando...")
@@ -178,13 +196,11 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
         cv2.imwrite(os.path.join(upload_dir, 'debug_planificada.jpg'), norm)
         print("📸 debug_planificada.jpg salva")
 
-        # ETAPA 5: posições das 26 questões (na ordem 1..26)
         posicoes = []
         for xa, nq_col in zip(COLUNAS_X, QUESTOES_POR_COLUNA):
             for r in range(nq_col):
                 posicoes.append((xa, Y0 + r * DY_LINHA))
 
-        # ETAPA 6: leitura
         gray_norm = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY)
         debug_img = norm.copy()
         respostas = []
