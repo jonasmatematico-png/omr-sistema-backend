@@ -239,7 +239,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
             y_inicio = int(min(tl[1], tr[1])) + margem_y_topo
             y_fim = int(max(bl[1], br[1])) - margem_y_base
             
-            largura_grade = x_fim - x_inicio
+            largura_grade = x_fim - x_inicio - 15  # -15px na largura
             altura_grade = y_fim - y_inicio
             
             print(f"📏 Grade detectada: ({x_inicio},{y_inicio}) até ({x_fim},{y_fim}) = {largura_grade}x{altura_grade}")
