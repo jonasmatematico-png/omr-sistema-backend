@@ -1,5 +1,5 @@
 # services/omr.py
-# OMR 4.1 - Leitura auto-calibrada: detecta as bolinhas da linha (imune a espaçamento)
+# OMR 4.3 - Threshold sensível + classificação por densidade + coluna 3 corrigida
 
 import cv2
 import numpy as np
@@ -8,8 +8,7 @@ import traceback
 
 TAM_NORM = (1000, 470)
 
-# Grade APROXIMADA (só pra localizar a região de cada linha/coluna)
-COLUNAS_X = [76, 337, 599, 833]
+COLUNAS_X = [76, 337, 570, 833]   # coluna 3 recalibrada (570)
 DX_APROX = 37
 Y0 = 90
 DY = 47.7
@@ -115,49 +114,69 @@ def detectar_marcadores(image, upload_dir):
     cv2.imwrite(os.path.join(upload_dir, 'debug_marcadores.jpg'), debug_img)
     return ordered
 
-def ler_linha(gray, col_x, y):
+def ler_linha(gray, col_x, y, debug_img):
     """
-    Procura as bolinhas DESENHADAS nesta linha e descobre qual está pintada.
-    Imune a variações de espaçamento da folha.
+    Acha as bolinhas da linha (mesmo fraquinhas), ordena esq→dir (A,B,C,D)
+    e identifica a pintada pela DENSIDADE (sólida vs anel).
     """
     h, w = gray.shape
-    x0 = max(0, int(col_x - 15))
-    x1 = min(w, int(col_x + 3 * DX_APROX + 15))
+    x0 = max(0, int(col_x - 30))
+    x1 = min(w, int(col_x + 3 * DX_APROX + 30))
     y0 = max(0, int(y - MEIA_ALTURA))
     y1 = min(h, int(y + MEIA_ALTURA))
     strip = gray[y0:y1, x0:x1]
 
-    blurred = cv2.GaussianBlur(strip, (3, 3), 0)
-    _, th = cv2.threshold(blurred, 140, 255, cv2.THRESH_BINARY_INV)
+    # threshold sensível: pega até bolinha apagada (sem blur pra não afinar o anel)
+    _, th = cv2.threshold(strip, 180, 255, cv2.THRESH_BINARY_INV)
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    slots = {0: [], 1: [], 2: [], 3: []}
+    bolhas = []
     for c in contours:
         x, yb, bw, bh = cv2.boundingRect(c)
-        if 10 <= bw <= 32 and 10 <= bh <= 32 and 0.6 <= bw / float(bh) <= 1.4:
-            cx = x + bw / 2 + x0
+        if 9 <= bw <= 30 and 9 <= bh <= 26 and 0.6 <= bw / float(bh) <= 1.4:
+            roi = th[yb: yb + bh, x: x + bw]
+            densidade = cv2.countNonZero(roi) / float(bw * bh)
+            cx = x + bw / 2
             interior = strip[yb + bh // 4: yb + 3 * bh // 4,
                              x + bw // 4: x + 3 * bw // 4]
             m = float(np.mean(interior)) if interior.size else 255.0
-            best_i = min(range(4), key=lambda i: abs(cx - (col_x + i * DX_APROX)))
-            if abs(cx - (col_x + best_i * DX_APROX)) < 16:
-                slots[best_i].append(m)
+            bolhas.append([cx, densidade, m])
 
+    bolhas.sort(key=lambda b: b[0])
+
+    clusters = []
+    for cx, d, m in bolhas:
+        if clusters and abs(cx - clusters[-1][0]) < 12:
+            cl = clusters[-1]
+            cl[0] = (cl[0] + cx) / 2
+            cl[1] = max(cl[1], d)
+            cl[2] = min(cl[2], m)
+        else:
+            clusters.append([cx, d, m])
+
+    for cx, d, m in clusters:
+        cv2.circle(debug_img, (int(cx), int(y)), 12, (0, 255, 255), 1)
+
+    if len(clusters) == 4:
+        melhor = min(range(4), key=lambda i: clusters[i][2])
+        menor = clusters[melhor][2]
+        pos_x = clusters[melhor][0]
+        if menor < LIMIAR_BRILHO:
+            return ['A', 'B', 'C', 'D'][melhor], pos_x, menor, len(clusters)
+        return '', pos_x, menor, len(clusters)
+
+    # fallback: janelas fixas (coluna 3 já recalibrada)
     brilhos = []
     for i in range(4):
-        if slots[i]:
-            brilhos.append(min(slots[i]))
-        else:
-            bx = int(col_x + i * DX_APROX)
-            win = gray[int(y) - JANELA: int(y) + JANELA, bx - JANELA: bx + JANELA]
-            brilhos.append(float(np.mean(win)) if win.size else 255.0)
-
+        bx = int(col_x + i * DX_APROX)
+        win = gray[int(y) - JANELA: int(y) + JANELA, bx - JANELA: bx + JANELA]
+        brilhos.append(float(np.mean(win)) if win.size else 255.0)
     melhor = int(np.argmin(brilhos))
-    menor_brilho = brilhos[melhor]
-
-    if menor_brilho < LIMIAR_BRILHO:
-        return ['A', 'B', 'C', 'D'][melhor], melhor, menor_brilho
-    return '', melhor, menor_brilho
+    menor = brilhos[melhor]
+    pos_x = col_x + melhor * DX_APROX
+    if menor < LIMIAR_BRILHO:
+        return ['A', 'B', 'C', 'D'][melhor], pos_x, menor, len(clusters)
+    return '', pos_x, menor, len(clusters)
 
 def processar_imagem(caminho_imagem, gabarito_esperado):
 
@@ -171,7 +190,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
     try:
         gabarito_esperado = list(gabarito_esperado)
         n_q = min(len(gabarito_esperado), 26)
-        print(f"🚨 OMR 4.1 — DETECÇÃO DE BOLINHAS AUTO-CALIBRADA — lendo {n_q} 🚨")
+        print(f"🚨 OMR 4.3 — SENSÍVEL + DENSIDADE + COL3 CALIBRADA — lendo {n_q} 🚨")
 
         corrigir_orientacao(caminho_imagem)
 
@@ -217,18 +236,14 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
 
         for q in range(n_q):
             cx, cy = posicoes[q]
-
-            for i in range(4):
-                cv2.circle(debug_img, (int(cx + i * DX_APROX), int(cy)), JANELA, (255, 0, 0), 1)
-
-            resp, melhor, brilho = ler_linha(gray_norm, cx, cy)
+            resp, pos_x, brilho, n_bolhas = ler_linha(gray_norm, cx, cy, debug_img)
             respostas.append(resp)
 
             if resp:
-                cv2.circle(debug_img, (int(cx + melhor * DX_APROX), int(cy)), JANELA + 2, (0, 255, 0), 2)
-                print(f"   ✅ Q{q+1}: '{resp}' (brilho: {round(brilho,1)})")
+                cv2.circle(debug_img, (int(pos_x), int(cy)), JANELA + 2, (0, 255, 0), 2)
+                print(f"   ✅ Q{q+1}: '{resp}' (brilho: {round(brilho,1)} | bolinhas: {n_bolhas})")
             else:
-                print(f"   ⚠️ Q{q+1}: Não detectado (brilho: {round(brilho,1)})")
+                print(f"   ⚠️ Q{q+1}: Não detectado (brilho: {round(brilho,1)} | bolinhas: {n_bolhas})")
 
         cv2.imwrite(os.path.join(upload_dir, 'debug_leitura_final.jpg'), debug_img)
         print("📸 debug_leitura_final.jpg salva")
