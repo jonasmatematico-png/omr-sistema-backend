@@ -1,6 +1,5 @@
 # services/omr.py
-# OMR Sistema 4.0 - Calibrado para gabarito de 26 questões (7/7/7/5)
-# Usa a MESMA régua em mm do seu gabarito impresso
+# OMR 4.1 - Leitura auto-calibrada: detecta as bolinhas da linha (imune a espaçamento)
 
 import cv2
 import numpy as np
@@ -9,21 +8,16 @@ import traceback
 
 TAM_NORM = (1000, 470)
 
-# ══ CALIBRAÇÃO PARA O SEU GABARITO (26 questões, 7/7/7/5) ══
-KX = 1000 / 193.0
-KY = 470 / 86.5
-X0_COLS = [8, 56, 104, 152]
-N_COLS  = [7, 7, 7, 5]          # ← 7+7+7+5 = 26 questões!
-OFF_MM  = [8, 17, 26, 35]
-ROW0_MM, ROWH_MM = 16, 9        # altura da linha ajustada
+# Grade APROXIMADA (só pra localizar a região de cada linha/coluna)
+COLUNAS_X = [76, 337, 599, 833]
+DX_APROX = 37
+Y0 = 90
+DY = 47.7
+N_COLS = [7, 7, 7, 5]
 
-COLUNAS = [{'x': (x0 + 8) * KX, 'dx': 9 * KX, 'n': n} for x0, n in zip(X0_COLS, N_COLS)]
-Y0 = ROW0_MM * KY
-DY = ROWH_MM * KY
-
+MEIA_ALTURA = 16
 JANELA = 10
 LIMIAR_BRILHO = 200
-TOLERANCIA = [-6, -3, 0, 3, 6]
 
 def ordem_pontos(pts):
     rect = np.zeros((4, 2), dtype="float32")
@@ -62,7 +56,7 @@ def esconder_qr_code(image, upload_dir):
             x_max = int(min(w_img, np.max(pts[:, 0]) + 30))
             y_max = int(min(h_img, np.max(pts[:, 1]) + 30))
             cv2.rectangle(image, (x_min, y_min), (x_max, y_max), (255, 255, 255), -1)
-            print(f"✅ QR escondido!")
+            print("✅ QR escondido!")
             return True
         print("ℹ️ Nenhum QR detectado (seguindo sem esconder)")
         return False
@@ -121,6 +115,50 @@ def detectar_marcadores(image, upload_dir):
     cv2.imwrite(os.path.join(upload_dir, 'debug_marcadores.jpg'), debug_img)
     return ordered
 
+def ler_linha(gray, col_x, y):
+    """
+    Procura as bolinhas DESENHADAS nesta linha e descobre qual está pintada.
+    Imune a variações de espaçamento da folha.
+    """
+    h, w = gray.shape
+    x0 = max(0, int(col_x - 15))
+    x1 = min(w, int(col_x + 3 * DX_APROX + 15))
+    y0 = max(0, int(y - MEIA_ALTURA))
+    y1 = min(h, int(y + MEIA_ALTURA))
+    strip = gray[y0:y1, x0:x1]
+
+    blurred = cv2.GaussianBlur(strip, (3, 3), 0)
+    _, th = cv2.threshold(blurred, 140, 255, cv2.THRESH_BINARY_INV)
+    contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    slots = {0: [], 1: [], 2: [], 3: []}
+    for c in contours:
+        x, yb, bw, bh = cv2.boundingRect(c)
+        if 10 <= bw <= 32 and 10 <= bh <= 32 and 0.6 <= bw / float(bh) <= 1.4:
+            cx = x + bw / 2 + x0
+            interior = strip[yb + bh // 4: yb + 3 * bh // 4,
+                             x + bw // 4: x + 3 * bw // 4]
+            m = float(np.mean(interior)) if interior.size else 255.0
+            best_i = min(range(4), key=lambda i: abs(cx - (col_x + i * DX_APROX)))
+            if abs(cx - (col_x + best_i * DX_APROX)) < 16:
+                slots[best_i].append(m)
+
+    brilhos = []
+    for i in range(4):
+        if slots[i]:
+            brilhos.append(min(slots[i]))
+        else:
+            bx = int(col_x + i * DX_APROX)
+            win = gray[int(y) - JANELA: int(y) + JANELA, bx - JANELA: bx + JANELA]
+            brilhos.append(float(np.mean(win)) if win.size else 255.0)
+
+    melhor = int(np.argmin(brilhos))
+    menor_brilho = brilhos[melhor]
+
+    if menor_brilho < LIMIAR_BRILHO:
+        return ['A', 'B', 'C', 'D'][melhor], melhor, menor_brilho
+    return '', melhor, menor_brilho
+
 def processar_imagem(caminho_imagem, gabarito_esperado):
 
     upload_dir = '/opt/render/project/src/backend/uploads'
@@ -133,7 +171,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
     try:
         gabarito_esperado = list(gabarito_esperado)
         n_q = min(len(gabarito_esperado), 26)
-        print(f"🚨 OMR 4.0 — GABARITO 26 QUESTÕES (7/7/7/5) — lendo {n_q} 🚨")
+        print(f"🚨 OMR 4.1 — DETECÇÃO DE BOLINHAS AUTO-CALIBRADA — lendo {n_q} 🚨")
 
         corrigir_orientacao(caminho_imagem)
 
@@ -147,7 +185,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
         print(f"📐 Tamanho original: {w_orig}x{h_orig}")
 
         if w_orig < 1200:
-            print("⚠️ FOTO PEQUENA DEMAIS! Peça pro aluno aproximar o celular.")
+            print("⚠️ FOTO PEQUENA DEMAIS! Aproxime o celular da folha.")
 
         MAX_LARGURA = 1600
         if w_orig > MAX_LARGURA:
@@ -169,40 +207,28 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
         cv2.imwrite(os.path.join(upload_dir, 'debug_planificada.jpg'), norm)
 
         posicoes = []
-        for col in COLUNAS:
-            for r in range(col['n']):
-                posicoes.append((col['x'], col['dx'], Y0 + r * DY))
+        for xa, n in zip(COLUNAS_X, N_COLS):
+            for r in range(n):
+                posicoes.append((xa, Y0 + r * DY))
 
         gray_norm = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY)
         debug_img = norm.copy()
         respostas = []
-        alternativas_map = ['A', 'B', 'C', 'D']
 
         for q in range(n_q):
-            cx, dx, cy = posicoes[q]
-            brilhos = []
+            cx, cy = posicoes[q]
+
             for i in range(4):
-                base_x = cx + i * dx
-                melhor_b = 255.0
-                for sh in TOLERANCIA:
-                    bx, by = int(base_x + sh), int(cy)
-                    miolo = gray_norm[by - JANELA: by + JANELA, bx - JANELA: bx + JANELA]
-                    if miolo.size > 0:
-                        melhor_b = min(melhor_b, float(np.mean(miolo)))
-                brilhos.append(melhor_b)
-                cv2.circle(debug_img, (int(base_x), int(cy)), JANELA, (255, 0, 0), 1)
+                cv2.circle(debug_img, (int(cx + i * DX_APROX), int(cy)), JANELA, (255, 0, 0), 1)
 
-            melhor = int(np.argmin(brilhos))
-            menor_brilho = brilhos[melhor]
+            resp, melhor, brilho = ler_linha(gray_norm, cx, cy)
+            respostas.append(resp)
 
-            if menor_brilho < LIMIAR_BRILHO:
-                resp = alternativas_map[melhor]
-                respostas.append(resp)
-                cv2.circle(debug_img, (int(cx + melhor * dx), int(cy)), JANELA + 2, (0, 255, 0), 2)
-                print(f"   ✅ Q{q+1}: '{resp}' (brilho: {round(menor_brilho,1)})")
+            if resp:
+                cv2.circle(debug_img, (int(cx + melhor * DX_APROX), int(cy)), JANELA + 2, (0, 255, 0), 2)
+                print(f"   ✅ Q{q+1}: '{resp}' (brilho: {round(brilho,1)})")
             else:
-                respostas.append('')
-                print(f"   ⚠️ Q{q+1}: Não detectado (brilho: {round(menor_brilho,1)})")
+                print(f"   ⚠️ Q{q+1}: Não detectado (brilho: {round(brilho,1)})")
 
         cv2.imwrite(os.path.join(upload_dir, 'debug_leitura_final.jpg'), debug_img)
         print("📸 debug_leitura_final.jpg salva")
