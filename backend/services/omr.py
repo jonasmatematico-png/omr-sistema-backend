@@ -1,5 +1,5 @@
 # services/omr.py
-# OMR 4.5 - RAIO-X: log com coordenadas de cada bolinha + proteção anti-travamento
+# OMR Sistema 4.6 - Leitura universal (1-30 questões) + QR Code real
 
 import cv2
 import numpy as np
@@ -30,36 +30,57 @@ def ordem_pontos(pts):
     return rect
 
 def esconder_qr_code(image, upload_dir):
+    """
+    Detecta e esconde o QR Code da folha.
+    Lógica: se LEU o conteúdo, é QR real → esconde SEMPRE.
+    Se NÃO leu e é grande, é alucinação → ignora.
+    """
     try:
         detector = cv2.QRCodeDetector()
         bbox = None
-        data, bbox, _ = detector.detectAndDecode(image)
-        if bbox is None:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            data, bbox, _ = detector.detectAndDecode(gray)
-        if bbox is None:
-            gray2 = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            data, bbox, _ = detector.detectAndDecode(clahe.apply(gray2))
+        data = None
+
+        # 3 tentativas de detecção (original, cinza, contraste)
+        for img_tentativa in [
+            image,
+            cv2.cvtColor(image, cv2.COLOR_BGR2GRAY),
+            cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(
+                cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            )
+        ]:
+            data, bbox, _ = detector.detectAndDecode(img_tentativa)
+            if bbox is not None:
+                break
 
         if bbox is not None and len(bbox) > 0:
             pts = bbox.astype(np.int32)
             h_img, w_img = image.shape[:2]
             w_qr = np.max(pts[:, 0]) - np.min(pts[:, 0])
             h_qr = np.max(pts[:, 1]) - np.min(pts[:, 1])
-            if w_qr > w_img * 0.25 or h_qr > h_img * 0.35:
-                print(f"⚠️ QR GRANDE DEMAIS ({w_qr}x{h_qr}) — ignorando")
+
+            # Se LEU o conteúdo → QR real, esconde SEMPRE
+            if data:
+                print(f"📱 QR LIDO! Tamanho: {w_qr}x{h_qr} | Conteúdo: '{data}'")
+            else:
+                # Sem conteúdo lido → proteção anti-alucinação
+                if w_qr > w_img * 0.25 or h_qr > h_img * 0.35:
+                    print(f"⚠️ Região grande ({w_qr}x{h_qr}) sem conteúdo — alucinação, ignorando")
+                    return False
+                print(f"🔍 Região detectada ({w_qr}x{h_qr}) sem conteúdo — ignorando")
                 return False
-            print(f"🔍 QR detectado! Tamanho: {w_qr}x{h_qr} | Conteúdo: '{data}'")
-            x_min = int(max(0, np.min(pts[:, 0]) - 30))
-            y_min = int(max(0, np.min(pts[:, 1]) - 30))
-            x_max = int(min(w_img, np.max(pts[:, 0]) + 30))
-            y_max = int(min(h_img, np.max(pts[:, 1]) + 30))
+
+            # Pinta o QR de branco com margem generosa
+            x_min = int(max(0, np.min(pts[:, 0]) - 40))
+            y_min = int(max(0, np.min(pts[:, 1]) - 40))
+            x_max = int(min(w_img, np.max(pts[:, 0]) + 40))
+            y_max = int(min(h_img, np.max(pts[:, 1]) + 40))
             cv2.rectangle(image, (x_min, y_min), (x_max, y_max), (255, 255, 255), -1)
-            print("✅ QR escondido!")
+            print(f"✅ QR escondido! Região: ({x_min},{y_min}) até ({x_max},{y_max})")
             return True
+
         print("ℹ️ Nenhum QR detectado (seguindo sem esconder)")
         return False
+
     except Exception as e:
         print(f"⚠️ Erro ao detectar QR: {e}")
         return False
@@ -129,7 +150,7 @@ def detectar_marcadores(image, upload_dir):
     return ordered
 
 def ler_linha(gray, col_x, y, debug_img, qnum):
-    """RAIO-X: nunca trava; imprime no log tudo o que encontra."""
+    """Lê a linha: detecta as 4 bolinhas e pega a mais escura."""
     try:
         h, w = gray.shape
         x0 = max(0, int(col_x - 30))
@@ -165,7 +186,6 @@ def ler_linha(gray, col_x, y, debug_img, qnum):
         for cx, m in clusters:
             cv2.circle(debug_img, (int(cx), int(y)), 12, (0, 255, 255), 1)
 
-        #  RAIO-X no log: onde achou bolinhas e quão escuras são
         print(f"   🔬 Q{qnum}: {len(clusters)} bolinhas em x={[int(c[0]) for c in clusters]} brilhos={[round(c[1]) for c in clusters]}")
 
         if len(clusters) == 4:
@@ -206,7 +226,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
     try:
         gabarito_esperado = list(gabarito_esperado)
         n_q = min(len(gabarito_esperado), 26)
-        print(f"🚨 OMR 4.5 — MODO RAIO-X — lendo {n_q} 🚨🚨")
+        print(f"🚨 OMR 4.6 — UNIVERSAL + QR REAL — lendo {n_q} 🚨🚨")
 
         corrigir_orientacao(caminho_imagem)
 
