@@ -248,6 +248,30 @@ def list_debug_images():
     arquivos.sort(reverse=True)
     return jsonify({"arquivos": arquivos})
 
+    # ==========================================================
+# 📱 ROTA PARA GERAR QR CODE DA AVALIAÇÃO
+# ==========================================================
+@app.route('/api/qr/<int:id_avaliacao>', methods=['GET'])
+def gerar_qr_avaliacao(id_avaliacao):
+    import qrcode
+    import io
+    from flask import send_file
+
+    qr = qrcode.QRCode(
+        error_correction=qrcode.constants.ERROR_CORRECT_H,
+        box_size=10,
+        border=2,
+    )
+    qr.add_data(f'OMRAV{id_avaliacao}')
+    qr.make(fit=True)
+    img = qr.make_image(fill_color='black', back_color='white').convert('RGB')
+
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    buf.seek(0)
+    print(f"📱 QR gerado para avaliação {id_avaliacao}")
+    return send_file(buf, mimetype='image/png')
+
 # ==========================================================
 # 🏁 INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO)
 # ==========================================================

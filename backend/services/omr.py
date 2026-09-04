@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import os
 import traceback
+import itertools
 
 TAM_NORM = (1000, 470)
 
@@ -49,7 +50,7 @@ def esconder_qr_code(image, upload_dir):
             if w_qr > w_img * 0.25 or h_qr > h_img * 0.35:
                 print(f"⚠️ QR GRANDE DEMAIS ({w_qr}x{h_qr}) — ignorando")
                 return False
-            print(f"🔍 QR detectado! Tamanho: {w_qr}x{h_qr}")
+            print(f"🔍 QR detectado! Tamanho: {w_qr}x{h_qr} | Conteúdo: '{data}'")
             x_min = int(max(0, np.min(pts[:, 0]) - 30))
             y_min = int(max(0, np.min(pts[:, 1]) - 30))
             x_max = int(min(w_img, np.max(pts[:, 0]) + 30))
@@ -104,8 +105,21 @@ def detectar_marcadores(image, upload_dir):
         cv2.imwrite(os.path.join(upload_dir, 'debug_marcadores.jpg'), debug_img)
         return None
 
+    # 🛡️ ANTI-QR: escolhe os 4 candidatos que formam o MAIOR quadrilátero
+    # (os marcadores verdadeiros estão nos cantos extremos da folha;
+    #  qualquer pedaço de QR que escapar forma um quadrilátero menor)
     candidatos.sort(key=lambda c: c[0], reverse=True)
-    ordered = ordem_pontos(np.array([c[1] for c in candidatos[:4]], dtype="float32"))
+    top = candidatos[:8]
+    melhor_combo = None
+    melhor_area = -1
+    for combo in itertools.combinations(top, 4):
+        pts = np.array([c[1] for c in combo], dtype="float32")
+        ord_pts = ordem_pontos(pts)
+        area = cv2.contourArea(ord_pts.astype(np.int32))
+        if area > melhor_area:
+            melhor_area = area
+            melhor_combo = ord_pts
+    ordered = melhor_combo
 
     for i, pt in enumerate(ordered):
         cv2.circle(debug_img, (int(pt[0]), int(pt[1])), 14, (0, 255, 0), 3)
