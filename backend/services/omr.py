@@ -132,7 +132,7 @@ def ler_linha(gray, col_x, y, debug_img, qnum):
         for c in contours:
             x, yb, bw, bh = cv2.boundingRect(c)
             if 10 <= bw <= 30 and 10 <= bh <= 26 and 0.6 <= bw / float(bh) <= 1.4:
-                cx = x + bw / 2
+                cx = x + bw / 2 + x0   # coordenada ABSOLUTA na imagem
                 interior = strip[yb + bh // 4: yb + 3 * bh // 4,
                                  x + bw // 4: x + 3 * bw // 4]
                 m = float(np.mean(interior)) if interior.size else 255.0
