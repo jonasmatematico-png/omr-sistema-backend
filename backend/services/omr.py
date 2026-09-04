@@ -1,5 +1,5 @@
 # services/omr.py
-# OMR 4.4 - Detecção estável da 4.2 + coluna 3 recalibrada (570)
+# OMR 4.5 - RAIO-X: log com coordenadas de cada bolinha + proteção anti-travamento
 
 import cv2
 import numpy as np
@@ -8,7 +8,7 @@ import traceback
 
 TAM_NORM = (1000, 470)
 
-COLUNAS_X = [76, 337, 570, 833]   # coluna 3 medida pelos verdes da 4.2
+COLUNAS_X = [76, 337, 570, 833]
 DX_APROX = 37
 Y0 = 90
 DY = 47.7
@@ -114,66 +114,71 @@ def detectar_marcadores(image, upload_dir):
     cv2.imwrite(os.path.join(upload_dir, 'debug_marcadores.jpg'), debug_img)
     return ordered
 
-def ler_linha(gray, col_x, y, debug_img):
-    """
-    Versão ESTÁVEL (da 4.2): procura as 4 bolinhas da linha com threshold 140.
-    Se achar exatamente 4, ordena esq→dir e pega a mais escura.
-    Senão, usa janelas fixas (agora com coluna 3 calibrada em 570).
-    """
-    h, w = gray.shape
-    x0 = max(0, int(col_x - 30))
-    x1 = min(w, int(col_x + 3 * DX_APROX + 30))
-    y0 = max(0, int(y - MEIA_ALTURA))
-    y1 = min(h, int(y + MEIA_ALTURA))
-    strip = gray[y0:y1, x0:x1]
+def ler_linha(gray, col_x, y, debug_img, qnum):
+    """RAIO-X: nunca trava; imprime no log tudo o que encontra."""
+    try:
+        h, w = gray.shape
+        x0 = max(0, int(col_x - 30))
+        x1 = min(w, int(col_x + 3 * DX_APROX + 30))
+        y0 = max(0, int(y - MEIA_ALTURA))
+        y1 = min(h, int(y + MEIA_ALTURA))
+        strip = gray[y0:y1, x0:x1]
 
-    blurred = cv2.GaussianBlur(strip, (3, 3), 0)
-    _, th = cv2.threshold(blurred, 140, 255, cv2.THRESH_BINARY_INV)
-    contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        blurred = cv2.GaussianBlur(strip, (3, 3), 0)
+        _, th = cv2.threshold(blurred, 140, 255, cv2.THRESH_BINARY_INV)
+        contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    bolhas = []
-    for c in contours:
-        x, yb, bw, bh = cv2.boundingRect(c)
-        if 10 <= bw <= 30 and 10 <= bh <= 26 and 0.6 <= bw / float(bh) <= 1.4:
-            cx = x + bw / 2
-            interior = strip[yb + bh // 4: yb + 3 * bh // 4,
-                             x + bw // 4: x + 3 * bw // 4]
-            m = float(np.mean(interior)) if interior.size else 255.0
-            bolhas.append([cx, m])
+        bolhas = []
+        for c in contours:
+            x, yb, bw, bh = cv2.boundingRect(c)
+            if 10 <= bw <= 30 and 10 <= bh <= 26 and 0.6 <= bw / float(bh) <= 1.4:
+                cx = x + bw / 2
+                interior = strip[yb + bh // 4: yb + 3 * bh // 4,
+                                 x + bw // 4: x + 3 * bw // 4]
+                m = float(np.mean(interior)) if interior.size else 255.0
+                bolhas.append([cx, m])
 
-    bolhas.sort(key=lambda b: b[0])
+        bolhas.sort(key=lambda b: b[0])
 
-    clusters = []
-    for cx, m in bolhas:
-        if clusters and abs(cx - clusters[-1][0]) < 12:
-            clusters[-1][0] = (clusters[-1][0] + cx) / 2
-            clusters[-1][1] = min(clusters[-1][1], m)
-        else:
-            clusters.append([cx, m])
+        clusters = []
+        for cx, m in bolhas:
+            if clusters and abs(cx - clusters[-1][0]) < 12:
+                clusters[-1][0] = (clusters[-1][0] + cx) / 2
+                clusters[-1][1] = min(clusters[-1][1], m)
+            else:
+                clusters.append([cx, m])
 
-    for cx, m in clusters:
-        cv2.circle(debug_img, (int(cx), int(y)), 12, (0, 255, 255), 1)
+        for cx, m in clusters:
+            cv2.circle(debug_img, (int(cx), int(y)), 12, (0, 255, 255), 1)
 
-    if len(clusters) == 4:
-        melhor = min(range(4), key=lambda i: clusters[i][1])
-        menor = clusters[melhor][1]
-        pos_x = clusters[melhor][0]
+        #  RAIO-X no log: onde achou bolinhas e quão escuras são
+        print(f"   🔬 Q{qnum}: {len(clusters)} bolinhas em x={[int(c[0]) for c in clusters]} brilhos={[round(c[1]) for c in clusters]}")
+
+        if len(clusters) == 4:
+            melhor = min(range(4), key=lambda i: clusters[i][1])
+            menor = clusters[melhor][1]
+            pos_x = clusters[melhor][0]
+            if menor < LIMIAR_BRILHO:
+                return ['A', 'B', 'C', 'D'][melhor], pos_x, menor, len(clusters)
+            return '', pos_x, menor, len(clusters)
+
+        # fallback: janelas fixas
+        brilhos = []
+        for i in range(4):
+            bx = int(col_x + i * DX_APROX)
+            win = gray[int(y) - JANELA: int(y) + JANELA, bx - JANELA: bx + JANELA]
+            brilhos.append(float(np.mean(win)) if win.size else 255.0)
+        print(f"   🔬 Q{qnum} fallback brilhos={[round(b) for b in brilhos]}")
+        melhor = int(np.argmin(brilhos))
+        menor = brilhos[melhor]
+        pos_x = col_x + melhor * DX_APROX
         if menor < LIMIAR_BRILHO:
             return ['A', 'B', 'C', 'D'][melhor], pos_x, menor, len(clusters)
         return '', pos_x, menor, len(clusters)
 
-    # fallback: janelas fixas (coluna 3 agora em 570)
-    brilhos = []
-    for i in range(4):
-        bx = int(col_x + i * DX_APROX)
-        win = gray[int(y) - JANELA: int(y) + JANELA, bx - JANELA: bx + JANELA]
-        brilhos.append(float(np.mean(win)) if win.size else 255.0)
-    melhor = int(np.argmin(brilhos))
-    menor = brilhos[melhor]
-    pos_x = col_x + melhor * DX_APROX
-    if menor < LIMIAR_BRILHO:
-        return ['A', 'B', 'C', 'D'][melhor], pos_x, menor, len(clusters)
-    return '', pos_x, menor, len(clusters)
+    except Exception as e:
+        print(f"   ⚠️ Q{qnum}: erro interno na leitura: {e}")
+        return '', col_x, 255.0, 0
 
 def processar_imagem(caminho_imagem, gabarito_esperado):
 
@@ -187,7 +192,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
     try:
         gabarito_esperado = list(gabarito_esperado)
         n_q = min(len(gabarito_esperado), 26)
-        print(f"🚨 OMR 4.4 — ESTÁVEL + COL3 EM 570 — lendo {n_q} 🚨")
+        print(f"🚨 OMR 4.5 — MODO RAIO-X — lendo {n_q} 🚨🚨")
 
         corrigir_orientacao(caminho_imagem)
 
@@ -233,14 +238,14 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
 
         for q in range(n_q):
             cx, cy = posicoes[q]
-            resp, pos_x, brilho, n_bolhas = ler_linha(gray_norm, cx, cy, debug_img)
+            resp, pos_x, brilho, n_bolhas = ler_linha(gray_norm, cx, cy, debug_img, q + 1)
             respostas.append(resp)
 
             if resp:
                 cv2.circle(debug_img, (int(pos_x), int(cy)), JANELA + 2, (0, 255, 0), 2)
-                print(f"   ✅ Q{q+1}: '{resp}' (brilho: {round(brilho,1)} | bolinhas: {n_bolhas})")
+                print(f"   ✅ Q{q+1}: '{resp}' (brilho: {round(brilho,1)})")
             else:
-                print(f"   ⚠️ Q{q+1}: Não detectado (brilho: {round(brilho,1)} | bolinhas: {n_bolhas})")
+                print(f"   ⚠️ Q{q+1}: Não detectado (brilho: {round(brilho,1)})")
 
         cv2.imwrite(os.path.join(upload_dir, 'debug_leitura_final.jpg'), debug_img)
         print("📸 debug_leitura_final.jpg salva")
