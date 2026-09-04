@@ -1,5 +1,5 @@
 # services/omr.py
-# OMR Sistema 4.7 - À prova de foto cortada (reconstrói marcador faltante)
+# OMR Sistema 4.8 - QR com borracha inteligente + à prova de foto cortada
 
 import cv2
 import numpy as np
@@ -54,6 +54,10 @@ def esconder_qr_code(image, upload_dir):
 
             if data:
                 print(f"📱 QR LIDO! Tamanho: {w_qr}x{h_qr} | Conteúdo: '{data}'")
+                # 🆕 4.8: BORRACHA COM JUÍZO — só pinta se o retângulo for plausível
+                if w_qr > w_img * 0.30 or h_qr > h_img * 0.45:
+                    print("⚠️ QR lido, mas retângulo não confiável — NÃO pintando (bolinhas protegidas)")
+                    return True
             else:
                 if w_qr > w_img * 0.25 or h_qr > h_img * 0.35:
                     print(f"⚠️ Região grande ({w_qr}x{h_qr}) sem conteúdo — alucinação, ignorando")
@@ -136,7 +140,6 @@ def detectar_marcadores(image, upload_dir):
                 return False
         return cv2.contourArea(ord_pts.astype(np.int32)) > 0.4 * area_img
 
-    # 1) combinações de 4: maior quadrilátero VÁLIDO (cantos nos quadrantes certos)
     candidatos.sort(key=lambda c: c[0], reverse=True)
     top = candidatos[:8]
     melhor = None
@@ -153,7 +156,6 @@ def detectar_marcadores(image, upload_dir):
     if melhor is not None:
         ordered = melhor
     else:
-        # 2) FOTO CORTADA? reconstrói o canto faltante (paralelogramo)
         por_quadrante = {}
         for area, pt in candidatos:
             q = quadrante(pt)
@@ -261,7 +263,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
     try:
         gabarito_esperado = list(gabarito_esperado)
         n_q = min(len(gabarito_esperado), 26)
-        print(f"🚨 OMR 4.7 — À PROVA DE FOTO CORTADA — lendo {n_q} 🚨🚨")
+        print(f"🚨 OMR 4.8 — QR COM BORRACHA INTELIGENTE — lendo {n_q} 🚨🚨")
 
         corrigir_orientacao(caminho_imagem)
 
