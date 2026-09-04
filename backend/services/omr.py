@@ -1,5 +1,5 @@
 # services/omr.py
-# OMR Sistema 4.6 - Leitura universal (1-30 questões) + QR Code real
+# OMR Sistema 4.7 - À prova de foto cortada (reconstrói marcador faltante)
 
 import cv2
 import numpy as np
@@ -30,17 +30,11 @@ def ordem_pontos(pts):
     return rect
 
 def esconder_qr_code(image, upload_dir):
-    """
-    Detecta e esconde o QR Code da folha.
-    Lógica: se LEU o conteúdo, é QR real → esconde SEMPRE.
-    Se NÃO leu e é grande, é alucinação → ignora.
-    """
     try:
         detector = cv2.QRCodeDetector()
         bbox = None
         data = None
 
-        # 3 tentativas de detecção (original, cinza, contraste)
         for img_tentativa in [
             image,
             cv2.cvtColor(image, cv2.COLOR_BGR2GRAY),
@@ -58,18 +52,15 @@ def esconder_qr_code(image, upload_dir):
             w_qr = np.max(pts[:, 0]) - np.min(pts[:, 0])
             h_qr = np.max(pts[:, 1]) - np.min(pts[:, 1])
 
-            # Se LEU o conteúdo → QR real, esconde SEMPRE
             if data:
                 print(f"📱 QR LIDO! Tamanho: {w_qr}x{h_qr} | Conteúdo: '{data}'")
             else:
-                # Sem conteúdo lido → proteção anti-alucinação
                 if w_qr > w_img * 0.25 or h_qr > h_img * 0.35:
                     print(f"⚠️ Região grande ({w_qr}x{h_qr}) sem conteúdo — alucinação, ignorando")
                     return False
                 print(f"🔍 Região detectada ({w_qr}x{h_qr}) sem conteúdo — ignorando")
                 return False
 
-            # Pinta o QR de branco com margem generosa
             x_min = int(max(0, np.min(pts[:, 0]) - 40))
             y_min = int(max(0, np.min(pts[:, 1]) - 40))
             x_max = int(min(w_img, np.max(pts[:, 0]) + 40))
@@ -122,25 +113,71 @@ def detectar_marcadores(image, upload_dir):
     for area, (cx, cy) in candidatos:
         cv2.circle(debug_img, (int(cx), int(cy)), 14, (0, 0, 255), 2)
 
-    if len(candidatos) < 4:
+    if len(candidatos) < 3:
         cv2.imwrite(os.path.join(upload_dir, 'debug_marcadores.jpg'), debug_img)
         return None
 
-    # 🛡️ ANTI-QR: escolhe os 4 candidatos que formam o MAIOR quadrilátero
-    # (os marcadores verdadeiros estão nos cantos extremos da folha;
-    #  qualquer pedaço de QR que escapar forma um quadrilátero menor)
+    h_img, w_img = image.shape[:2]
+    area_img = w_img * h_img
+
+    def quadrante(pt):
+        x, y = pt
+        esq = x < w_img / 2
+        cima = y < h_img / 2
+        if esq and cima: return 'TL'
+        if not esq and cima: return 'TR'
+        if not esq and not cima: return 'BR'
+        return 'BL'
+
+    def valida(ord_pts):
+        nomes = ['TL', 'TR', 'BR', 'BL']
+        for pt, nome in zip(ord_pts, nomes):
+            if quadrante(tuple(pt)) != nome:
+                return False
+        return cv2.contourArea(ord_pts.astype(np.int32)) > 0.4 * area_img
+
+    # 1) combinações de 4: maior quadrilátero VÁLIDO (cantos nos quadrantes certos)
     candidatos.sort(key=lambda c: c[0], reverse=True)
     top = candidatos[:8]
-    melhor_combo = None
+    melhor = None
     melhor_area = -1
     for combo in itertools.combinations(top, 4):
         pts = np.array([c[1] for c in combo], dtype="float32")
         ord_pts = ordem_pontos(pts)
-        area = cv2.contourArea(ord_pts.astype(np.int32))
-        if area > melhor_area:
-            melhor_area = area
-            melhor_combo = ord_pts
-    ordered = melhor_combo
+        if valida(ord_pts):
+            a = cv2.contourArea(ord_pts.astype(np.int32))
+            if a > melhor_area:
+                melhor_area = a
+                melhor = ord_pts
+
+    if melhor is not None:
+        ordered = melhor
+    else:
+        # 2) FOTO CORTADA? reconstrói o canto faltante (paralelogramo)
+        por_quadrante = {}
+        for area, pt in candidatos:
+            q = quadrante(pt)
+            if q not in por_quadrante:
+                por_quadrante[q] = pt
+
+        if len(por_quadrante) == 3:
+            falta = [q for q in ['TL', 'TR', 'BR', 'BL'] if q not in por_quadrante][0]
+            p = por_quadrante
+            if falta == 'BR':
+                novo = (p['TR'][0] + p['BL'][0] - p['TL'][0], p['TR'][1] + p['BL'][1] - p['TL'][1])
+            elif falta == 'TL':
+                novo = (p['TR'][0] + p['BL'][0] - p['BR'][0], p['TR'][1] + p['BL'][1] - p['BR'][1])
+            elif falta == 'TR':
+                novo = (p['TL'][0] + p['BR'][0] - p['BL'][0], p['TL'][1] + p['BR'][1] - p['BL'][1])
+            else:
+                novo = (p['TL'][0] + p['BR'][0] - p['TR'][0], p['TL'][1] + p['BR'][1] - p['TR'][1])
+            p[falta] = novo
+            print(f"🧩 Canto {falta} fora da foto — reconstruído em ({int(novo[0])},{int(novo[1])})")
+            ordered = np.array([p['TL'], p['TR'], p['BR'], p['BL']], dtype="float32")
+        else:
+            print("❌ Menos de 3 marcadores visíveis — peça foto melhor enquadrada")
+            cv2.imwrite(os.path.join(upload_dir, 'debug_marcadores.jpg'), debug_img)
+            return None
 
     for i, pt in enumerate(ordered):
         cv2.circle(debug_img, (int(pt[0]), int(pt[1])), 14, (0, 255, 0), 3)
@@ -150,7 +187,6 @@ def detectar_marcadores(image, upload_dir):
     return ordered
 
 def ler_linha(gray, col_x, y, debug_img, qnum):
-    """Lê a linha: detecta as 4 bolinhas e pega a mais escura."""
     try:
         h, w = gray.shape
         x0 = max(0, int(col_x - 30))
@@ -167,7 +203,7 @@ def ler_linha(gray, col_x, y, debug_img, qnum):
         for c in contours:
             x, yb, bw, bh = cv2.boundingRect(c)
             if 10 <= bw <= 30 and 10 <= bh <= 26 and 0.6 <= bw / float(bh) <= 1.4:
-                cx = x + bw / 2 + x0   # coordenada ABSOLUTA na imagem
+                cx = x + bw / 2 + x0
                 interior = strip[yb + bh // 4: yb + 3 * bh // 4,
                                  x + bw // 4: x + 3 * bw // 4]
                 m = float(np.mean(interior)) if interior.size else 255.0
@@ -196,7 +232,6 @@ def ler_linha(gray, col_x, y, debug_img, qnum):
                 return ['A', 'B', 'C', 'D'][melhor], pos_x, menor, len(clusters)
             return '', pos_x, menor, len(clusters)
 
-        # fallback: janelas fixas
         brilhos = []
         for i in range(4):
             bx = int(col_x + i * DX_APROX)
@@ -226,7 +261,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
     try:
         gabarito_esperado = list(gabarito_esperado)
         n_q = min(len(gabarito_esperado), 26)
-        print(f"🚨 OMR 4.6 — UNIVERSAL + QR REAL — lendo {n_q} 🚨🚨")
+        print(f"🚨 OMR 4.7 — À PROVA DE FOTO CORTADA — lendo {n_q} 🚨🚨")
 
         corrigir_orientacao(caminho_imagem)
 
