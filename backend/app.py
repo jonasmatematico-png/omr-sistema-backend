@@ -390,6 +390,67 @@ def gerar_gabaritos_turma(id_turma, id_prova):
         import traceback
         traceback.print_exc()
         return f"<h1>❌ Erro: {e}</h1>", 500
+
+# ==========================================================
+# 📥 PÁGINA PARA BAIXAR GABARITOS (sem decorar URL!)
+# ==========================================================
+@app.route('/baixar_gabaritos', methods=['GET'])
+def pagina_baixar_gabaritos():
+    try:
+        resp_turmas = supabase.table("turmas").select("id, nome").order("id").execute()
+        turmas = resp_turmas.data or []
+        resp_avs = supabase.table("avaliacoes").select("id, nome").order("id").execute()
+        avs = resp_avs.data or []
+
+        opts_t = "".join(f'<option value="{t["id"]}">{t["nome"]}</option>' for t in turmas)
+        opts_a = "".join(f'<option value="{a["id"]}">{a["nome"]}</option>' for a in avs)
+
+        html = f'''<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📥 Baixar Gabaritos Personalizados</title>
+<style>
+  body {{ font-family: Arial; background:#f2f4ff; display:flex; justify-content:center; padding:20px; }}
+  .card {{ background:#fff; border-radius:16px; box-shadow:0 4px 20px rgba(0,0,0,.12); padding:28px; max-width:420px; width:100%; }}
+  h1 {{ font-size:20px; text-align:center; color:#3f51b5; }}
+  label {{ font-weight:bold; display:block; margin:14px 0 6px; color:#333; }}
+  select {{ width:100%; padding:12px; border-radius:8px; border:1px solid #bbb; font-size:15px; }}
+  button {{ width:100%; margin-top:18px; padding:14px; border:none; border-radius:10px; font-size:16px; font-weight:bold; color:#fff; cursor:pointer; }}
+  .btn-pdf {{ background:#3f51b5; }}
+  .btn-etq {{ background:#009688; }}
+  button:active {{ opacity:.8; }}
+  p.dica {{ font-size:12px; color:#777; text-align:center; margin-top:14px; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>📥 Gabaritos Personalizados</h1>
+  <label>1️⃣ Turma:</label>
+  <select id="turma">{opts_t}</select>
+  <label>2️⃣ Avaliação (prova):</label>
+  <select id="prova">{opts_a}</select>
+  <button class="btn-pdf" onclick="baixarPDF()">📄 BAIXAR PDF DOS GABARITOS</button>
+  <button class="btn-etq" onclick="baixarEtiquetas()">🏷️ BAIXAR ETIQUETAS QR DA TURMA</button>
+  <p class="dica">O PDF sai com 3 gabaritos por folha, cada um com o nome do aluno e o QR combo.</p>
+</div>
+<script>
+  function baixarPDF() {{
+    const t = document.getElementById('turma').value;
+    const p = document.getElementById('prova').value;
+    window.open('/api/gabaritos/turma/' + t + '/prova/' + p, '_blank');
+  }}
+  function baixarEtiquetas() {{
+    const t = document.getElementById('turma').value;
+    window.open('/api/etiquetas/' + t, '_blank');
+  }}
+</script>
+</body>
+</html>'''
+        return html
+    except Exception as e:
+        return f"<h1>Erro: {e}</h1>", 500
     
 # ==========================================================
 # 🏁 INICIALIZAÇÃO DO SERVIDOR
