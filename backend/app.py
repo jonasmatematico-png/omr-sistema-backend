@@ -272,53 +272,69 @@ def gerar_qr_combo(id_prova, id_aluno):
     buf.seek(0)
     return send_file(buf, mimetype='image/png')
 
-    # ==========================================================
-# 🎯 GERADOR DE GABARITOS PERSONALIZADOS POR TURMA
+# ==========================================================
+# 🎯 GERADOR DE GABARITOS PERSONALIZADOS POR TURMA (v2 - CORRIGIDA)
 # ==========================================================
 @app.route('/api/gabaritos/turma/<int:id_turma>/prova/<int:id_prova>', methods=['GET'])
 def gerar_gabaritos_turma(id_turma, id_prova):
     try:
-        # Busca dados
-        resp_turma = supabase.table("turmas").select("nome").eq("id", id_turma).maybe_single().execute()
-        turma_nome = resp_turma.data['nome'] if resp_turma.data else f"Turma {id_turma}"
+        print(f"🎯 Gerando gabaritos: turma={id_turma}, prova={id_prova}")
 
-        resp_av = supabase.table("avaliacoes").select("nome").eq("id", id_prova).maybe_single().execute()
-        prova_nome = resp_av.data['nome'] if resp_av.data else f"Prova {id_prova}"
+        # Busca turma (com tratamento robusto)
+        resp_turma = supabase.table("turmas").select("nome").eq("id", id_turma).execute()
+        if not resp_turma.data or len(resp_turma.data) == 0:
+            return f"<h1>❌ Turma ID {id_turma} não encontrada!</h1><p>Verifique em <a href='/api/turmas'>/api/turmas</a></p>", 404
+        turma_nome = resp_turma.data[0]['nome']
 
+        # Busca avaliação (com tratamento robusto)
+        resp_av = supabase.table("avaliacoes").select("nome").eq("id", id_prova).execute()
+        if not resp_av.data or len(resp_av.data) == 0:
+            return f"<h1>❌ Avaliação ID {id_prova} não encontrada!</h1><p>Verifique em <a href='/api/avaliacoes/lista'>/api/avaliacoes/lista</a></p>", 404
+        prova_nome = resp_av.data[0]['nome']
+
+        # Busca alunos
         resp_alunos = supabase.table("alunos").select("*").eq("id_turma", id_turma).execute()
-        alunos = resp_alunos or []
-        alunos = alunos.data if hasattr(alunos, 'data') else alunos
+        alunos = resp_alunos.data or []
         alunos.sort(key=lambda a: a.get("numero_chamada") or a.get("id") or 0)
 
         if not alunos:
-            return f"<h1>Nenhum aluno encontrado na turma {id_turma}</h1>", 404
+            return f"<h1>❌ Nenhum aluno encontrado na turma {turma_nome}!</h1>", 404
 
-        # Função para gerar um gabarito de um aluno
+        print(f"✅ Turma: {turma_nome} | Prova: {prova_nome} | Alunos: {len(alunos)}")
+
+        # Função para gerar um gabarito (4 colunas: 7+7+7+5 = 26)
         def gerar_gabarito_aluno(aluno):
             nome = aluno.get("nome") or aluno.get("nome_completo") or "Aluno"
             num = str(aluno.get("numero_chamada") or "")
             id_aluno = aluno['id']
-
-            # QR combo: OMRALUNO:{prova}:{aluno}
             qr_url = f"/api/qr/combo/{id_prova}/{id_aluno}"
 
-            # Bolinhas
-            linhas_html = ""
-            for i in range(15):
-                n1 = f"{i+1:02d}" if i < 15 else ""
-                n2 = f"{i+16:02d}" if i < 15 else ""
-                linhas_html += f'''
-                <div class="questao">
-                    <span class="q-numero">{n1}</span>
-                    <div class="bolinha"></div><div class="bolinha"></div><div class="bolinha"></div><div class="bolinha"></div>
-                </div>'''
-            linhas_html2 = ""
-            for i in range(15):
-                n2 = f"{i+16:02d}" if i < 15 else ""
-                linhas_html2 += f'''
-                <div class="questao">
-                    <span class="q-numero">{n2}</span>
-                    <div class="bolinha"></div><div class="bolinha"></div><div class="bolinha"></div><div class="bolinha"></div>
+            # Gera colunas: 7, 7, 7, 5 questões
+            cols_config = [
+                (1, 7),    # coluna 1: questões 1-7
+                (8, 14),   # coluna 2: questões 8-14
+                (15, 21),  # coluna 3: questões 15-21
+                (22, 26),  # coluna 4: questões 22-26
+            ]
+
+            colunas_html = ""
+            for ini, fim in cols_config:
+                questoes_html = ""
+                for n in range(ini, fim + 1):
+                    questoes_html += f'''
+                    <div class="questao">
+                        <span class="q-numero">{n:02d}</span>
+                        <div class="bolinha"></div>
+                        <div class="bolinha"></div>
+                        <div class="bolinha"></div>
+                        <div class="bolinha"></div>
+                    </div>'''
+                colunas_html += f'''
+                <div class="coluna">
+                    <div class="coluna-header">
+                        <span></span><span>A</span><span>B</span><span>C</span><span>D</span>
+                    </div>
+                    {questoes_html}
                 </div>'''
 
             return f'''
@@ -335,12 +351,12 @@ def gerar_gabaritos_turma(id_turma, id_prova):
                             <span class="nome-impresso">{nome}</span>
                         </div>
                         <div class="campo">
-                            <label>Turma:</label>
-                            <span class="valor">{turma_nome}</span>
-                        </div>
-                        <div class="campo">
                             <label>N°:</label>
                             <span class="valor">{num}</span>
+                        </div>
+                        <div class="campo">
+                            <label>Turma:</label>
+                            <span class="valor">{turma_nome}</span>
                         </div>
                         <div class="campo campo-full">
                             <label>Avaliação:</label>
@@ -349,16 +365,7 @@ def gerar_gabaritos_turma(id_turma, id_prova):
                     </div>
                 </div>
 
-                <div class="grade">
-                    <div class="coluna">
-                        <div class="coluna-header"><span></span><span>A</span><span>B</span><span>C</span><span>D</span></div>
-                        {linhas_html}
-                    </div>
-                    <div class="coluna">
-                        <div class="coluna-header"><span></span><span>A</span><span>B</span><span>C</span><span>D</span></div>
-                        {linhas_html2}
-                    </div>
-                </div>
+                <div class="grade">{colunas_html}</div>
 
                 <div class="qr-container">
                     <img class="qr-img" src="{qr_url}" alt="QR">
@@ -369,15 +376,15 @@ def gerar_gabaritos_turma(id_turma, id_prova):
         # Gera todos os gabaritos
         gabaritos = [gerar_gabarito_aluno(a) for a in alunos]
 
-        # Monta o HTML com quebras de página (3 por folha A4)
+        # Monta páginas (3 por folha A4)
         paginas = ""
         for i in range(0, len(gabaritos), 3):
             grupo = gabaritos[i:i+3]
             quebras = ""
             for j, gab in enumerate(grupo):
                 quebras += gab
-                if j < 2 and j < len(grupo) - 1:
-                    quebras += '<div class="linha-corte">✂ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─</div>'
+                if j < len(grupo) - 1:
+                    quebras += '<div class="linha-corte">✂ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─</div>'
             paginas += f'<div class="folha">{quebras}</div>'
             if i + 3 < len(gabaritos):
                 paginas += '<div style="page-break-after: always;"></div>'
@@ -386,37 +393,38 @@ def gerar_gabaritos_turma(id_turma, id_prova):
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<title>Gabaritos Personalizados - {turma_nome} - {prova_nome}</title>
+<title>Gabaritos - {turma_nome} - {prova_nome}</title>
 <style>
     @page {{ size: A4 portrait; margin: 5mm; }}
     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
     body {{ font-family: Arial, Helvetica, sans-serif; background: #fff; padding: 10px; }}
+    h1 {{ text-align: center; font-size: 14px; margin-bottom: 4mm; color: #333; }}
+
     .folha {{ width: 200mm; min-height: 286mm; margin: 0 auto; padding: 0.5mm 2mm; display: flex; flex-direction: column; justify-content: space-between; }}
     .gabarito {{ position: relative; height: 91.5mm; border: 0.5mm solid #333; padding: 1.5mm 4mm 1mm 4mm; overflow: hidden; }}
+
     .marcador {{ position: absolute; width: 5mm; height: 5mm; background: #000; }}
     .marcador.tl {{ top: 0; left: 0; }} .marcador.tr {{ top: 0; right: 0; }}
     .marcador.bl {{ bottom: 0; left: 0; }} .marcador.br {{ bottom: 0; right: 0; }}
 
-    .cabecalho {{ display: flex; gap: 3mm; margin-bottom: 1.2mm; padding-bottom: 0.8mm; border-bottom: 0.3mm dashed #999; }}
-    .campos {{ flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 1mm 4mm; font-size: 8.5px; }}
+    .cabecalho {{ margin-bottom: 1.5mm; padding-bottom: 1mm; border-bottom: 0.3mm dashed #999; }}
+    .campos {{ display: grid; grid-template-columns: 1fr 1fr; gap: 1mm 4mm; font-size: 8.5px; }}
     .campo {{ display: flex; align-items: baseline; gap: 1.5mm; }}
     .campo label {{ font-weight: bold; white-space: nowrap; }}
     .campo .nome-impresso {{ flex: 1; border-bottom: 0.3mm solid #333; font-weight: bold; font-size: 10px; padding-left: 2mm; }}
     .campo .valor {{ flex: 1; border-bottom: 0.3mm solid #333; font-weight: bold; padding-left: 2mm; }}
     .campo-full {{ grid-column: 1 / -1; }}
 
-    .grade {{ display: grid; grid-template-columns: 1fr 1fr; gap: 0 6mm; }}
-    .coluna-header {{ display: grid; grid-template-columns: 7mm 1fr 1fr 1fr 1fr; font-size: 8px; font-weight: bold; text-align: center; height: 3.5mm; color: #333; }}
-    .questao {{ display: grid; grid-template-columns: 7mm 1fr 1fr 1fr 1fr; align-items: center; height: 4.4mm; border-bottom: 0.2mm dotted #ccc; }}
-    .q-numero {{ font-size: 8px; font-weight: bold; text-align: center; color: #333; }}
-    .bolinha {{ width: 3.8mm; height: 3.8mm; border: 0.5mm solid #333; border-radius: 50%; margin: 0 auto; }}
+    .grade {{ display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 0 3mm; }}
+    .coluna-header {{ display: grid; grid-template-columns: 5mm 1fr 1fr 1fr 1fr; font-size: 7px; font-weight: bold; text-align: center; height: 3mm; color: #333; }}
+    .questao {{ display: grid; grid-template-columns: 5mm 1fr 1fr 1fr 1fr; align-items: center; height: 4.2mm; border-bottom: 0.2mm dotted #ccc; }}
+    .q-numero {{ font-size: 7.5px; font-weight: bold; text-align: center; color: #333; }}
+    .bolinha {{ width: 3.5mm; height: 3.5mm; border: 0.4mm solid #333; border-radius: 50%; margin: 0 auto; }}
 
     .qr-container {{ position: absolute; bottom: 2mm; right: 3mm; }}
     .qr-img {{ width: 16mm; height: 16mm; }}
 
     .linha-corte {{ text-align: center; font-size: 7px; color: #999; height: 3mm; line-height: 3mm; }}
-
-    h1 {{ text-align: center; font-size: 14px; margin-bottom: 4mm; color: #333; }}
 
     @media print {{
         body {{ padding: 0; background: white; }}
@@ -425,7 +433,7 @@ def gerar_gabaritos_turma(id_turma, id_prova):
 </style>
 </head>
 <body>
-<h1>📋 GABARITOS PERSONALIZADOS — {turma_nome} — {prova_nome}</h1>
+<h1>📋 GABARITOS PERSONALIZADOS — {turma_nome} — {prova_nome} ({len(alunos)} alunos)</h1>
 {paginas}
 </body>
 </html>'''
@@ -434,7 +442,7 @@ def gerar_gabaritos_turma(id_turma, id_prova):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return f"<h1>Erro ao gerar gabaritos: {e}</h1>", 500
+        return f"<h1>❌ Erro ao gerar gabaritos: {e}</h1>", 500
 
 # ==========================================================
 # 🏷️ FOLHA DE ETIQUETAS QR DA TURMA
