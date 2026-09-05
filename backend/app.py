@@ -290,6 +290,12 @@ def gerar_gabaritos_turma(id_turma, id_prova):
             return "<h1>❌ Arquivo gabarito_base.png não encontrado!</h1><p>Coloque a imagem do gabarito limpo com o nome gabarito_base.png na pasta do backend.</p>", 404
 
         base = Image.open(base_path).convert('RGB')
+
+        # 🔽 Reduz a imagem base UMA vez (evita estourar a memória do Render)
+        BASE_W = 1200
+        _r = BASE_W / base.width
+        base = base.resize((BASE_W, int(base.height * _r)), Image.LANCZOS)
+
         W, H = base.size
 
         # Fonte (tenta as fontes do servidor Linux)
