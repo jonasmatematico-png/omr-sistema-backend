@@ -1,10 +1,12 @@
 # app.py
 # OMR Sistema 2.0 - Backend Híbrido (Supabase + Câmera OMR)
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from supabase import create_client, Client
 import os
+import io
+import qrcode
 
 # ==========================================================
 # 🔑 CRIAÇÃO DO OBJETO FLASK E CONFIGURAÇÃO INICIAL
@@ -22,16 +24,11 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ==========================================================
-# 🚨 CARREGAMENTO E REGISTRO DO BLUEPRINT DE CORREÇÃO (DEVE VIR DEPOIS DA CRIAÇÃO DO APP)
+# 🚨 CARREGAMENTO E REGISTRO DO BLUEPRINT DE CORREÇÃO
 # ==========================================================
 
-# Importa o blueprint *depois* que 'app' e 'supabase' são definidos
-# A importação é feita aqui para garantir que 'app' já exista quando 'corrigir_bp' for registrado.
-# O 'print' de debug é opcional, mas ajuda a confirmar o carregamento.
 from routes.corrigir import corrigir_bp
 print("DEBUG: Blueprint 'corrigir_bp' importado com sucesso.")
-
-# Registra o blueprint *depois* que 'app' foi criado e configurado.
 app.register_blueprint(corrigir_bp)
 print("DEBUG: Blueprint 'corrigir_bp' registrado com sucesso.")
 
@@ -107,19 +104,14 @@ def salvar_correcao_omr():
         return jsonify({'erro': 'Formato inválido. Envie JSON.'}), 400
 
     dados = request.get_json()
-
-    # Tenta pegar os IDs direto (o ideal), senão usa os nomes (fallback)
     id_aluno = dados.get('id_aluno')
-    id_avaliacao = dados.get('id_avaliacao', 1) # Se não enviar, usa 1 como padrão
+    id_avaliacao = dados.get('id_avaliacao', 1)
     nome_aluno = dados.get('nome', '')
     turma_nome = dados.get('turma', '')
     nota_final = float(dados.get('nota_final', 0.0))
-
-    # NOVO: Lista de respostas detalhadas que o celular deve enviar
     detalhes_respostas = dados.get('detalhes_respostas', [])
 
     try:
-        # Se o ID do aluno não veio direto, busca pelo nome (para não quebrar seu app atual)
         if not id_aluno:
             resp_turma = supabase.table("turmas").select("id").eq("nome", turma_nome).execute()
             if not resp_turma.data:
@@ -134,9 +126,8 @@ def salvar_correcao_omr():
         nivel = "Abaixo do Básico"
         if nota_final >= 8: nivel = "Avançado"
         elif nota_final >= 6: nivel = "Adequado"
-        elif nota_final >= 4: nivel = "Básico" # Corrigido typo: "Bás" para "Básico"
+        elif nota_final >= 4: nivel = "Básico"
 
-        # 1. SALVAR RESULTADO FINAL (Já fazia isso)
         supabase.table("resultados").insert({
             "id_aluno": id_aluno,
             "id_avaliacao": id_avaliacao,
@@ -146,7 +137,6 @@ def salvar_correcao_omr():
             "devolutiva": f"O aluno acertou questões totalizando nota {nota_final}."
         }).execute()
 
-        # 2. 🚨 NOVO: SALVAR CADA RESPOSTA NA TABELA 'respostas'
         if detalhes_respostas:
             print(f"💾 Salvando {len(detalhes_respostas)} respostas detalhadas no banco...")
             for item in detalhes_respostas:
@@ -183,9 +173,6 @@ def criar_avaliacao():
     except Exception as e:
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
-# ========================================================================
-# 🚨 AQUI ESTÁ A ROTA DO GABARITO (NO NÍVEL CORRETO, SEM INDENTAÇÃO ERRADA)
-# ========================================================================
 @app.route('/api/avaliacoes/gabarito/salvar', methods=['POST'])
 def salvar_gabarito():
     try:
@@ -224,67 +211,45 @@ def salvar_gabarito():
     except Exception as e:
         print(f"🔴 [PYTHON] ERRO CRÍTICO ao salvar gabarito: {e}")
         import traceback
-        traceback.print_exc() # Isso vai mostrar a linha exata do erro no terminal
+        traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
-    # ==========================================================
-# 📸 ROTA PARA BAIXAR FOTOS DE DEBUG
-# ==========================================================
 @app.route('/debug/<filename>', methods=['GET'])
 def get_debug_image(filename):
-    import os
     filepath = os.path.join('uploads', filename)
     if os.path.exists(filepath):
-        from flask import send_file
         return send_file(filepath, mimetype='image/jpeg')
     return jsonify({"erro": f"Arquivo {filename} não encontrado"}), 404
 
 @app.route('/debug/lista', methods=['GET'])
 def list_debug_images():
-    import os
     if not os.path.exists('uploads'):
         return jsonify({"arquivos": []})
     arquivos = [f for f in os.listdir('uploads') if f.endswith('.jpg')]
     arquivos.sort(reverse=True)
     return jsonify({"arquivos": arquivos})
 
-    # ==========================================================
-# 📱 ROTA PARA GERAR QR CODE DA AVALIAÇÃO
+# ==========================================================
+# 📱 QR CODE DA AVALIAÇÃO
 # ==========================================================
 @app.route('/api/qr/<int:id_avaliacao>', methods=['GET'])
 def gerar_qr_avaliacao(id_avaliacao):
-    import qrcode
-    import io
-    from flask import send_file
-
-    qr = qrcode.QRCode(
-        error_correction=qrcode.constants.ERROR_CORRECT_H,
-        box_size=10,
-        border=2,
-    )
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=2)
     qr.add_data(f'OMRPROVA:{id_avaliacao}')
     qr.make(fit=True)
     img = qr.make_image(fill_color='black', back_color='white').convert('RGB')
-
     buf = io.BytesIO()
     img.save(buf, format='PNG')
     buf.seek(0)
     print(f"📱 QR gerado para avaliação {id_avaliacao}")
     return send_file(buf, mimetype='image/png')
+
 # ==========================================================
 # 📱 QR DO ALUNO (sticker/cartão permanente)
 # ==========================================================
 @app.route('/api/qr/aluno/<int:id_aluno>', methods=['GET'])
 def gerar_qr_aluno(id_aluno):
-    import qrcode
-    import io
-    from flask import send_file
-
-    qr = qrcode.QRCode(
-        error_correction=qrcode.constants.ERROR_CORRECT_H,
-        box_size=10,
-        border=2,
-    )
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=2)
     qr.add_data(f'OMRCARD:{id_aluno}')
     qr.make(fit=True)
     img = qr.make_image(fill_color='black', back_color='white').convert('RGB')
@@ -293,21 +258,12 @@ def gerar_qr_aluno(id_aluno):
     buf.seek(0)
     return send_file(buf, mimetype='image/png')
 
-
 # ==========================================================
-# 📱 QR COMBO (prova + aluno) — para o gabarito personalizado
+# 📱 QR COMBO (prova + aluno)
 # ==========================================================
 @app.route('/api/qr/combo/<int:id_prova>/<int:id_aluno>', methods=['GET'])
 def gerar_qr_combo(id_prova, id_aluno):
-    import qrcode
-    import io
-    from flask import send_file
-
-    qr = qrcode.QRCode(
-        error_correction=qrcode.constants.ERROR_CORRECT_H,
-        box_size=10,
-        border=2,
-    )
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=2)
     qr.add_data(f'OMRALUNO:{id_prova}:{id_aluno}')
     qr.make(fit=True)
     img = qr.make_image(fill_color='black', back_color='white').convert('RGB')
@@ -316,9 +272,8 @@ def gerar_qr_combo(id_prova, id_aluno):
     buf.seek(0)
     return send_file(buf, mimetype='image/png')
 
-
 # ==========================================================
-# 🏷️ FOLHA DE ETIQUETAS QR DA TURMA (imprimir e recortar)
+# 🏷️ FOLHA DE ETIQUETAS QR DA TURMA
 # ==========================================================
 @app.route('/api/etiquetas/<int:id_turma>', methods=['GET'])
 def etiquetas_turma(id_turma):
@@ -357,19 +312,12 @@ def etiquetas_turma(id_turma):
         return f"<h1>Erro: {e}</h1>", 500
 
 # ==========================================================
-# 🏁 INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO)
+# 🏁 INICIALIZAÇÃO DO SERVIDOR
 # ==========================================================
 if __name__ == '__main__':
     print("🚨🚨🚨 OMR SISTEMA 2.0 - HÍBRIDO (SUPABASE + CÂMERA) 🚨🚨🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
-
-    # 🚨 AJUSTE PARA RENDER: Sempre use a porta fornecida pelo ambiente
-    # O Render define automaticamente a variável PORT.
-    # O valor padrão é 10000, mas é melhor deixar o ambiente definir.
-    # Não defina host='127.0.0.1', use '0.0.0.0' como exigido.
     port = int(os.environ.get("PORT", 10000))
     print(f"📡 Servidor rodando na porta: {port} (host: 0.0.0.0)")
     print(f"   Acessível em: http://0.0.0.0:{port}")
-
-    # Obrigatório para o Render: Bind em 0.0.0.0
     app.run(host='0.0.0.0', port=port, debug=False)
