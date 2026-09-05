@@ -1,6 +1,6 @@
 # services/omr.py
-# OMR 4.9 FINAL - VERSÃO COMPLETA
-# Borracha inteligente + Anti-QR + Ampliação de foto + Multi-threshold + RAIO-X
+# OMR 4.10 - VERSÃO COMPLETA FINAL
+# Multi-threshold (luz) + filtro tolerante (rabiscos) + ampliação + RAIO-X
 
 import cv2
 import numpy as np
@@ -16,9 +16,9 @@ Y0 = 90
 DY = 47.7
 N_COLS = [7, 7, 7, 5]
 
-MEIA_ALTURA = 16
-JANELA = 10
-LIMIAR_BRILHO = 200
+MEIA_ALTURA = 18
+JANELA = 12
+LIMIAR_BRILHO = 205
 
 def ordem_pontos(pts):
     rect = np.zeros((4, 2), dtype="float32")
@@ -49,9 +49,8 @@ def corrigir_orientacao(caminho_imagem):
 def esconder_qr_code(image, upload_dir):
     """
     BORRACHA INTELIGENTE:
-    - Leu o conteúdo E o retângulo é confiável (quase quadrado) -> pinta de branco
-    - Leu o conteúdo mas retângulo suspeito -> NÃO pinta (protege bolinhas)
-    - Não leu nada -> ignora
+    - Leu conteúdo E retângulo confiável (quase quadrado) -> pinta de branco
+    - Leu conteúdo mas retângulo suspeito -> NÃO pinta (protege bolinhas)
     Retorna o conteúdo do QR (ou None).
     """
     try:
@@ -115,7 +114,6 @@ def detectar_marcadores(image, upload_dir):
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
     # 🛡️ MULTI-THRESHOLD: pega marcadores pretos (80), marrons (110) e claros (140)
-    # Assim a variação de LUZ não atrapalha mais!
     candidatos = []
     vistos = []
     for thr in [80, 110, 140]:
@@ -128,7 +126,6 @@ def detectar_marcadores(image, upload_dir):
             solidez = area / (w * h) if w * h > 0 else 0
             if 100 < area < 12000 and 0.6 < aspect < 1.4 and solidez > 0.7:
                 cx, cy = x + w / 2.0, y + h / 2.0
-                # evita duplicar o mesmo marcador entre thresholds
                 if all(((cx - px) ** 2 + (cy - py) ** 2) > 225 for px, py in vistos):
                     vistos.append((cx, cy))
                     candidatos.append((area, (cx, cy)))
@@ -165,7 +162,7 @@ def detectar_marcadores(image, upload_dir):
     return ordered
 
 def ler_linha(gray, col_x, y, debug_img, qnum):
-    """RAIO-X: nunca trava; imprime no log tudo o que encontra."""
+    """RAIO-X: nunca trava; filtro TOLERANTE a bolinhas rabiscadas."""
     try:
         h, w = gray.shape
         x0 = max(0, int(col_x - 30))
@@ -175,13 +172,14 @@ def ler_linha(gray, col_x, y, debug_img, qnum):
         strip = gray[y0:y1, x0:x1]
 
         blurred = cv2.GaussianBlur(strip, (3, 3), 0)
-        _, th = cv2.threshold(blurred, 140, 255, cv2.THRESH_BINARY_INV)
+        _, th = cv2.threshold(blurred, 145, 255, cv2.THRESH_BINARY_INV)
         contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         bolhas = []
         for c in contours:
             x, yb, bw, bh = cv2.boundingRect(c)
-            if 10 <= bw <= 30 and 10 <= bh <= 26 and 0.6 <= bw / float(bh) <= 1.4:
+            # 🎯 FILTRO TOLERANTE: aceita bolinhas rabiscadas/maiores (até 32x30)
+            if 9 <= bw <= 32 and 9 <= bh <= 30 and 0.55 <= bw / float(bh) <= 1.6:
                 cx = x + bw / 2 + x0  # coordenada ABSOLUTA
                 interior = strip[yb + bh // 4: yb + 3 * bh // 4,
                                  x + bw // 4: x + 3 * bw // 4]
@@ -211,7 +209,7 @@ def ler_linha(gray, col_x, y, debug_img, qnum):
                 return ['A', 'B', 'C', 'D'][melhor], pos_x, menor, len(clusters)
             return '', pos_x, menor, len(clusters)
 
-        # fallback: janelas fixas
+        # fallback: janelas fixas (agora maiores)
         brilhos = []
         for i in range(4):
             bx = int(col_x + i * DX_APROX)
@@ -241,7 +239,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
     try:
         gabarito_esperado = list(gabarito_esperado)
         n_q = min(len(gabarito_esperado), 26)
-        print(f"🚨 OMR 4.9 FINAL — VERSÃO COMPLETA — lendo {n_q} 🚨")
+        print(f"🚨 OMR 4.10 — VERSÃO FINAL — lendo {n_q} 🚨")
 
         corrigir_orientacao(caminho_imagem)
 
