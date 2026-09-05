@@ -273,216 +273,118 @@ def gerar_qr_combo(id_prova, id_aluno):
     return send_file(buf, mimetype='image/png')
 
 # ==========================================================
-# 🎯 GERADOR DE GABARITOS PERSONALIZADOS POR TURMA (v2 - CORRIGIDA)
+# 🎯 GERADOR DE GABARITOS PERSONALIZADOS (v3 - CARIMBO NA IMAGEM ORIGINAL)
 # ==========================================================
 @app.route('/api/gabaritos/turma/<int:id_turma>/prova/<int:id_prova>', methods=['GET'])
 def gerar_gabaritos_turma(id_turma, id_prova):
-    try:
-        print(f"🎯 Gerando gabaritos: turma={id_turma}, prova={id_prova}")
+    from PIL import Image, ImageDraw, ImageFont
+    import qrcode
+    import io
 
-        # Busca turma (com tratamento robusto)
+    try:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        base_path = os.path.join(base_dir, 'gabarito_base.png')
+        if not os.path.exists(base_path):
+            base_path = os.path.join(base_dir, 'uploads', 'gabarito_base.png')
+        if not os.path.exists(base_path):
+            return "<h1>❌ Arquivo gabarito_base.png não encontrado!</h1><p>Coloque a imagem do gabarito limpo com o nome gabarito_base.png na pasta do backend.</p>", 404
+
+        base = Image.open(base_path).convert('RGB')
+        W, H = base.size
+
+        # Fonte (tenta as fontes do servidor Linux)
+        fonte = None
+        for fp in ['/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+                   '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
+                   '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf']:
+            try:
+                fonte = ImageFont.truetype(fp, int(H * 0.032))
+                break
+            except Exception:
+                continue
+        if fonte is None:
+            fonte = ImageFont.load_default()
+
+        # Busca os dados
         resp_turma = supabase.table("turmas").select("nome").eq("id", id_turma).execute()
-        if not resp_turma.data or len(resp_turma.data) == 0:
-            return f"<h1>❌ Turma ID {id_turma} não encontrada!</h1><p>Verifique em <a href='/api/turmas'>/api/turmas</a></p>", 404
+        if not resp_turma.data:
+            return f"<h1>❌ Turma {id_turma} não encontrada!</h1>", 404
         turma_nome = resp_turma.data[0]['nome']
 
-        # Busca avaliação (com tratamento robusto)
         resp_av = supabase.table("avaliacoes").select("nome").eq("id", id_prova).execute()
-        if not resp_av.data or len(resp_av.data) == 0:
-            return f"<h1>❌ Avaliação ID {id_prova} não encontrada!</h1><p>Verifique em <a href='/api/avaliacoes/lista'>/api/avaliacoes/lista</a></p>", 404
+        if not resp_av.data:
+            return f"<h1>❌ Avaliação {id_prova} não encontrada!</h1>", 404
         prova_nome = resp_av.data[0]['nome']
 
-        # Busca alunos
         resp_alunos = supabase.table("alunos").select("*").eq("id_turma", id_turma).execute()
         alunos = resp_alunos.data or []
         alunos.sort(key=lambda a: a.get("numero_chamada") or a.get("id") or 0)
-
         if not alunos:
-            return f"<h1>❌ Nenhum aluno encontrado na turma {turma_nome}!</h1>", 404
+            return f"<h1>❌ Nenhum aluno na turma {turma_nome}!</h1>", 404
 
-        print(f"✅ Turma: {turma_nome} | Prova: {prova_nome} | Alunos: {len(alunos)}")
+        print(f"🎯 Gerando PDF: {len(alunos)} gabaritos ({turma_nome} / {prova_nome})")
 
-        # Função para gerar um gabarito (4 colunas: 7+7+7+5 = 26)
-        def gerar_gabarito_aluno(aluno):
+        # Carimba cada aluno na imagem original
+        gabaritos = []
+        for aluno in alunos:
             nome = aluno.get("nome") or aluno.get("nome_completo") or "Aluno"
             num = str(aluno.get("numero_chamada") or "")
-            id_aluno = aluno['id']
-            qr_url = f"/api/qr/combo/{id_prova}/{id_aluno}"
+            img = base.copy()
+            draw = ImageDraw.Draw(img)
 
-            # Gera colunas: 7, 7, 7, 5 questões
-            cols_config = [
-                (1, 7),    # coluna 1: questões 1-7
-                (8, 14),   # coluna 2: questões 8-14
-                (15, 21),  # coluna 3: questões 15-21
-                (22, 26),  # coluna 4: questões 22-26
-            ]
+            # Nome impresso na faixa branca do TOPO
+            draw.text((W * 0.06, H * 0.025),
+                      f"Nome: {nome}    N°: {num}    Turma: {turma_nome}",
+                      font=fonte, fill=(0, 0, 0))
 
-            colunas_html = ""
-            for ini, fim in cols_config:
-                questoes_html = ""
-                for n in range(ini, fim + 1):
-                    questoes_html += f'''
-                    <div class="questao">
-                        <span class="q-numero">{n:02d}</span>
-                        <div class="bolinha"></div>
-                        <div class="bolinha"></div>
-                        <div class="bolinha"></div>
-                        <div class="bolinha"></div>
-                    </div>'''
-                colunas_html += f'''
-                <div class="coluna">
-                    <div class="coluna-header">
-                        <span></span><span>A</span><span>B</span><span>C</span><span>D</span>
-                    </div>
-                    {questoes_html}
-                </div>'''
+            # QR combo no espaço branco abaixo da coluna 4 (LONGE dos marcadores!)
+            qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=2)
+            qr.add_data(f'OMRALUNO:{id_prova}:{aluno["id"]}')
+            qr.make(fit=True)
+            qr_img = qr.make_image(fill_color='black', back_color='white').convert('RGB')
+            qr_size = int(H * 0.20)
+            qr_img = qr_img.resize((qr_size, qr_size))
+            img.paste(qr_img, (int(W * 0.79), int(H * 0.70)))
 
-            return f'''
-            <div class="gabarito">
-                <div class="marcador tl"></div>
-                <div class="marcador tr"></div>
-                <div class="marcador bl"></div>
-                <div class="marcador br"></div>
+            gabaritos.append(img)
 
-                <div class="cabecalho">
-                    <div class="campos">
-                        <div class="campo campo-full">
-                            <label>Nome:</label>
-                            <span class="nome-impresso">{nome}</span>
-                        </div>
-                        <div class="campo">
-                            <label>N°:</label>
-                            <span class="valor">{num}</span>
-                        </div>
-                        <div class="campo">
-                            <label>Turma:</label>
-                            <span class="valor">{turma_nome}</span>
-                        </div>
-                        <div class="campo campo-full">
-                            <label>Avaliação:</label>
-                            <span class="valor">{prova_nome}</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="grade">{colunas_html}</div>
-
-                <div class="qr-container">
-                    <img class="qr-img" src="{qr_url}" alt="QR">
-                </div>
-            </div>
-            '''
-
-        # Gera todos os gabaritos
-        gabaritos = [gerar_gabarito_aluno(a) for a in alunos]
-
-        # Monta páginas (3 por folha A4)
-        paginas = ""
+        # Monta o PDF: 3 gabaritos por folha A4
+        DPI = 150
+        AW, AH = int(210 / 25.4 * DPI), int(297 / 25.4 * DPI)
+        paginas = []
         for i in range(0, len(gabaritos), 3):
-            grupo = gabaritos[i:i+3]
-            quebras = ""
-            for j, gab in enumerate(grupo):
-                quebras += gab
-                if j < len(grupo) - 1:
-                    quebras += '<div class="linha-corte">✂ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─</div>'
-            paginas += f'<div class="folha">{quebras}</div>'
-            if i + 3 < len(gabaritos):
-                paginas += '<div style="page-break-after: always;"></div>'
+            grupo = gabaritos[i:i + 3]
+            canvas = Image.new('RGB', (AW, AH), 'white')
+            slot_h = AH // 3
+            for j, im in enumerate(grupo):
+                tw = AW - 30
+                ratio = tw / im.width
+                th = int(im.height * ratio)
+                if th > slot_h - 16:
+                    th = slot_h - 16
+                    ratio = th / im.height
+                    tw = int(im.width * ratio)
+                im2 = im.resize((tw, th))
+                x = (AW - tw) // 2
+                y = j * slot_h + (slot_h - th) // 2
+                canvas.paste(im2, (x, y))
+            paginas.append(canvas)
 
-        html = f'''<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<title>Gabaritos - {turma_nome} - {prova_nome}</title>
-<style>
-    @page {{ size: A4 portrait; margin: 5mm; }}
-    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-    body {{ font-family: Arial, Helvetica, sans-serif; background: #fff; padding: 10px; }}
-    h1 {{ text-align: center; font-size: 14px; margin-bottom: 4mm; color: #333; }}
+        buf = io.BytesIO()
+        if len(paginas) == 1:
+            paginas[0].save(buf, format='PDF', resolution=150)
+        else:
+            paginas[0].save(buf, format='PDF', save_all=True, append_images=paginas[1:], resolution=150)
+        buf.seek(0)
 
-    .folha {{ width: 200mm; min-height: 286mm; margin: 0 auto; padding: 0.5mm 2mm; display: flex; flex-direction: column; justify-content: space-between; }}
-    .gabarito {{ position: relative; height: 91.5mm; border: 0.5mm solid #333; padding: 1.5mm 4mm 1mm 4mm; overflow: hidden; }}
-
-    .marcador {{ position: absolute; width: 5mm; height: 5mm; background: #000; }}
-    .marcador.tl {{ top: 0; left: 0; }} .marcador.tr {{ top: 0; right: 0; }}
-    .marcador.bl {{ bottom: 0; left: 0; }} .marcador.br {{ bottom: 0; right: 0; }}
-
-    .cabecalho {{ margin-bottom: 1.5mm; padding-bottom: 1mm; border-bottom: 0.3mm dashed #999; }}
-    .campos {{ display: grid; grid-template-columns: 1fr 1fr; gap: 1mm 4mm; font-size: 8.5px; }}
-    .campo {{ display: flex; align-items: baseline; gap: 1.5mm; }}
-    .campo label {{ font-weight: bold; white-space: nowrap; }}
-    .campo .nome-impresso {{ flex: 1; border-bottom: 0.3mm solid #333; font-weight: bold; font-size: 10px; padding-left: 2mm; }}
-    .campo .valor {{ flex: 1; border-bottom: 0.3mm solid #333; font-weight: bold; padding-left: 2mm; }}
-    .campo-full {{ grid-column: 1 / -1; }}
-
-    .grade {{ display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 0 3mm; }}
-    .coluna-header {{ display: grid; grid-template-columns: 5mm 1fr 1fr 1fr 1fr; font-size: 7px; font-weight: bold; text-align: center; height: 3mm; color: #333; }}
-    .questao {{ display: grid; grid-template-columns: 5mm 1fr 1fr 1fr 1fr; align-items: center; height: 4.2mm; border-bottom: 0.2mm dotted #ccc; }}
-    .q-numero {{ font-size: 7.5px; font-weight: bold; text-align: center; color: #333; }}
-    .bolinha {{ width: 3.5mm; height: 3.5mm; border: 0.4mm solid #333; border-radius: 50%; margin: 0 auto; }}
-
-    .qr-container {{ position: absolute; bottom: 2mm; right: 3mm; }}
-    .qr-img {{ width: 16mm; height: 16mm; }}
-
-    .linha-corte {{ text-align: center; font-size: 7px; color: #999; height: 3mm; line-height: 3mm; }}
-
-    @media print {{
-        body {{ padding: 0; background: white; }}
-        .folha {{ padding: 0; }}
-    }}
-</style>
-</head>
-<body>
-<h1>📋 GABARITOS PERSONALIZADOS — {turma_nome} — {prova_nome} ({len(alunos)} alunos)</h1>
-{paginas}
-</body>
-</html>'''
-        return html
+        return send_file(buf, mimetype='application/pdf', as_attachment=True,
+                         download_name=f'gabaritos_{turma_nome}_{prova_nome}.pdf')
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return f"<h1>❌ Erro ao gerar gabaritos: {e}</h1>", 500
-
-# ==========================================================
-# 🏷️ FOLHA DE ETIQUETAS QR DA TURMA
-# ==========================================================
-@app.route('/api/etiquetas/<int:id_turma>', methods=['GET'])
-def etiquetas_turma(id_turma):
-    try:
-        resp = supabase.table("alunos").select("*").eq("id_turma", id_turma).execute()
-        alunos = resp.data or []
-        alunos.sort(key=lambda a: a.get("numero_chamada") or a.get("id") or 0)
-
-        cards = ""
-        for a in alunos:
-            nome = a.get("nome") or a.get("nome_completo") or "Aluno"
-            num = a.get("numero_chamada") or ""
-            cards += f'''
-            <div class="etiqueta">
-                <img src="/api/qr/aluno/{a['id']}">
-                <div class="nome">{num}. {nome}</div>
-            </div>'''
-
-        html = f'''<!DOCTYPE html>
-        <html lang="pt-BR"><head><meta charset="UTF-8">
-        <title>Etiquetas QR - Turma {id_turma}</title>
-        <style>
-            @page {{ size: A4 portrait; margin: 8mm; }}
-            body {{ font-family: Arial; }}
-            .grade {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; }}
-            .etiqueta {{ border: 1px dashed #999; padding: 3mm; text-align: center; page-break-inside: avoid; }}
-            .etiqueta img {{ width: 30mm; height: 30mm; }}
-            .nome {{ font-size: 9px; font-weight: bold; margin-top: 1mm; }}
-            h1 {{ font-size: 12px; text-align: center; }}
-        </style></head><body>
-        <h1>ETIQUETAS QR DOS ALUNOS — recorte e cole no gabarito (ou lamine como cartão)</h1>
-        <div class="grade">{cards}</div>
-        </body></html>'''
-        return html
-    except Exception as e:
-        return f"<h1>Erro: {e}</h1>", 500
-
+        return f"<h1>❌ Erro: {e}</h1>", 500
+    
 # ==========================================================
 # 🏁 INICIALIZAÇÃO DO SERVIDOR
 # ==========================================================
