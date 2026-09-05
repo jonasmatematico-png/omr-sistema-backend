@@ -272,6 +272,170 @@ def gerar_qr_combo(id_prova, id_aluno):
     buf.seek(0)
     return send_file(buf, mimetype='image/png')
 
+    # ==========================================================
+# 🎯 GERADOR DE GABARITOS PERSONALIZADOS POR TURMA
+# ==========================================================
+@app.route('/api/gabaritos/turma/<int:id_turma>/prova/<int:id_prova>', methods=['GET'])
+def gerar_gabaritos_turma(id_turma, id_prova):
+    try:
+        # Busca dados
+        resp_turma = supabase.table("turmas").select("nome").eq("id", id_turma).maybe_single().execute()
+        turma_nome = resp_turma.data['nome'] if resp_turma.data else f"Turma {id_turma}"
+
+        resp_av = supabase.table("avaliacoes").select("nome").eq("id", id_prova).maybe_single().execute()
+        prova_nome = resp_av.data['nome'] if resp_av.data else f"Prova {id_prova}"
+
+        resp_alunos = supabase.table("alunos").select("*").eq("id_turma", id_turma).execute()
+        alunos = resp_alunos or []
+        alunos = alunos.data if hasattr(alunos, 'data') else alunos
+        alunos.sort(key=lambda a: a.get("numero_chamada") or a.get("id") or 0)
+
+        if not alunos:
+            return f"<h1>Nenhum aluno encontrado na turma {id_turma}</h1>", 404
+
+        # Função para gerar um gabarito de um aluno
+        def gerar_gabarito_aluno(aluno):
+            nome = aluno.get("nome") or aluno.get("nome_completo") or "Aluno"
+            num = str(aluno.get("numero_chamada") or "")
+            id_aluno = aluno['id']
+
+            # QR combo: OMRALUNO:{prova}:{aluno}
+            qr_url = f"/api/qr/combo/{id_prova}/{id_aluno}"
+
+            # Bolinhas
+            linhas_html = ""
+            for i in range(15):
+                n1 = f"{i+1:02d}" if i < 15 else ""
+                n2 = f"{i+16:02d}" if i < 15 else ""
+                linhas_html += f'''
+                <div class="questao">
+                    <span class="q-numero">{n1}</span>
+                    <div class="bolinha"></div><div class="bolinha"></div><div class="bolinha"></div><div class="bolinha"></div>
+                </div>'''
+            linhas_html2 = ""
+            for i in range(15):
+                n2 = f"{i+16:02d}" if i < 15 else ""
+                linhas_html2 += f'''
+                <div class="questao">
+                    <span class="q-numero">{n2}</span>
+                    <div class="bolinha"></div><div class="bolinha"></div><div class="bolinha"></div><div class="bolinha"></div>
+                </div>'''
+
+            return f'''
+            <div class="gabarito">
+                <div class="marcador tl"></div>
+                <div class="marcador tr"></div>
+                <div class="marcador bl"></div>
+                <div class="marcador br"></div>
+
+                <div class="cabecalho">
+                    <div class="campos">
+                        <div class="campo campo-full">
+                            <label>Nome:</label>
+                            <span class="nome-impresso">{nome}</span>
+                        </div>
+                        <div class="campo">
+                            <label>Turma:</label>
+                            <span class="valor">{turma_nome}</span>
+                        </div>
+                        <div class="campo">
+                            <label>N°:</label>
+                            <span class="valor">{num}</span>
+                        </div>
+                        <div class="campo campo-full">
+                            <label>Avaliação:</label>
+                            <span class="valor">{prova_nome}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grade">
+                    <div class="coluna">
+                        <div class="coluna-header"><span></span><span>A</span><span>B</span><span>C</span><span>D</span></div>
+                        {linhas_html}
+                    </div>
+                    <div class="coluna">
+                        <div class="coluna-header"><span></span><span>A</span><span>B</span><span>C</span><span>D</span></div>
+                        {linhas_html2}
+                    </div>
+                </div>
+
+                <div class="qr-container">
+                    <img class="qr-img" src="{qr_url}" alt="QR">
+                </div>
+            </div>
+            '''
+
+        # Gera todos os gabaritos
+        gabaritos = [gerar_gabarito_aluno(a) for a in alunos]
+
+        # Monta o HTML com quebras de página (3 por folha A4)
+        paginas = ""
+        for i in range(0, len(gabaritos), 3):
+            grupo = gabaritos[i:i+3]
+            quebras = ""
+            for j, gab in enumerate(grupo):
+                quebras += gab
+                if j < 2 and j < len(grupo) - 1:
+                    quebras += '<div class="linha-corte">✂ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─</div>'
+            paginas += f'<div class="folha">{quebras}</div>'
+            if i + 3 < len(gabaritos):
+                paginas += '<div style="page-break-after: always;"></div>'
+
+        html = f'''<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Gabaritos Personalizados - {turma_nome} - {prova_nome}</title>
+<style>
+    @page {{ size: A4 portrait; margin: 5mm; }}
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{ font-family: Arial, Helvetica, sans-serif; background: #fff; padding: 10px; }}
+    .folha {{ width: 200mm; min-height: 286mm; margin: 0 auto; padding: 0.5mm 2mm; display: flex; flex-direction: column; justify-content: space-between; }}
+    .gabarito {{ position: relative; height: 91.5mm; border: 0.5mm solid #333; padding: 1.5mm 4mm 1mm 4mm; overflow: hidden; }}
+    .marcador {{ position: absolute; width: 5mm; height: 5mm; background: #000; }}
+    .marcador.tl {{ top: 0; left: 0; }} .marcador.tr {{ top: 0; right: 0; }}
+    .marcador.bl {{ bottom: 0; left: 0; }} .marcador.br {{ bottom: 0; right: 0; }}
+
+    .cabecalho {{ display: flex; gap: 3mm; margin-bottom: 1.2mm; padding-bottom: 0.8mm; border-bottom: 0.3mm dashed #999; }}
+    .campos {{ flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 1mm 4mm; font-size: 8.5px; }}
+    .campo {{ display: flex; align-items: baseline; gap: 1.5mm; }}
+    .campo label {{ font-weight: bold; white-space: nowrap; }}
+    .campo .nome-impresso {{ flex: 1; border-bottom: 0.3mm solid #333; font-weight: bold; font-size: 10px; padding-left: 2mm; }}
+    .campo .valor {{ flex: 1; border-bottom: 0.3mm solid #333; font-weight: bold; padding-left: 2mm; }}
+    .campo-full {{ grid-column: 1 / -1; }}
+
+    .grade {{ display: grid; grid-template-columns: 1fr 1fr; gap: 0 6mm; }}
+    .coluna-header {{ display: grid; grid-template-columns: 7mm 1fr 1fr 1fr 1fr; font-size: 8px; font-weight: bold; text-align: center; height: 3.5mm; color: #333; }}
+    .questao {{ display: grid; grid-template-columns: 7mm 1fr 1fr 1fr 1fr; align-items: center; height: 4.4mm; border-bottom: 0.2mm dotted #ccc; }}
+    .q-numero {{ font-size: 8px; font-weight: bold; text-align: center; color: #333; }}
+    .bolinha {{ width: 3.8mm; height: 3.8mm; border: 0.5mm solid #333; border-radius: 50%; margin: 0 auto; }}
+
+    .qr-container {{ position: absolute; bottom: 2mm; right: 3mm; }}
+    .qr-img {{ width: 16mm; height: 16mm; }}
+
+    .linha-corte {{ text-align: center; font-size: 7px; color: #999; height: 3mm; line-height: 3mm; }}
+
+    h1 {{ text-align: center; font-size: 14px; margin-bottom: 4mm; color: #333; }}
+
+    @media print {{
+        body {{ padding: 0; background: white; }}
+        .folha {{ padding: 0; }}
+    }}
+</style>
+</head>
+<body>
+<h1>📋 GABARITOS PERSONALIZADOS — {turma_nome} — {prova_nome}</h1>
+{paginas}
+</body>
+</html>'''
+        return html
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"<h1>Erro ao gerar gabaritos: {e}</h1>", 500
+
 # ==========================================================
 # 🏷️ FOLHA DE ETIQUETAS QR DA TURMA
 # ==========================================================
