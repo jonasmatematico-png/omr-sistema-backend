@@ -262,7 +262,7 @@ def gerar_qr_avaliacao(id_avaliacao):
         box_size=10,
         border=2,
     )
-    qr.add_data(f'OMRAV{id_avaliacao}')
+    qr.add_data(f'OMRPROVA:{id_avaliacao}')
     qr.make(fit=True)
     img = qr.make_image(fill_color='black', back_color='white').convert('RGB')
 
@@ -271,6 +271,90 @@ def gerar_qr_avaliacao(id_avaliacao):
     buf.seek(0)
     print(f"📱 QR gerado para avaliação {id_avaliacao}")
     return send_file(buf, mimetype='image/png')
+# ==========================================================
+# 📱 QR DO ALUNO (sticker/cartão permanente)
+# ==========================================================
+@app.route('/api/qr/aluno/<int:id_aluno>', methods=['GET'])
+def gerar_qr_aluno(id_aluno):
+    import qrcode
+    import io
+    from flask import send_file
+
+    qr = qrcode.QRCode(
+        error_correction=qrcode.constants.ERROR_CORRECT_H,
+        box_size=10,
+        border=2,
+    )
+    qr.add_data(f'OMRCARD:{id_aluno}')
+    qr.make(fit=True)
+    img = qr.make_image(fill_color='black', back_color='white').convert('RGB')
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    buf.seek(0)
+    return send_file(buf, mimetype='image/png')
+
+
+# ==========================================================
+# 📱 QR COMBO (prova + aluno) — para o gabarito personalizado
+# ==========================================================
+@app.route('/api/qr/combo/<int:id_prova>/<int:id_aluno>', methods=['GET'])
+def gerar_qr_combo(id_prova, id_aluno):
+    import qrcode
+    import io
+    from flask import send_file
+
+    qr = qrcode.QRCode(
+        error_correction=qrcode.constants.ERROR_CORRECT_H,
+        box_size=10,
+        border=2,
+    )
+    qr.add_data(f'OMRALUNO:{id_prova}:{id_aluno}')
+    qr.make(fit=True)
+    img = qr.make_image(fill_color='black', back_color='white').convert('RGB')
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    buf.seek(0)
+    return send_file(buf, mimetype='image/png')
+
+
+# ==========================================================
+# 🏷️ FOLHA DE ETIQUETAS QR DA TURMA (imprimir e recortar)
+# ==========================================================
+@app.route('/api/etiquetas/<int:id_turma>', methods=['GET'])
+def etiquetas_turma(id_turma):
+    try:
+        resp = supabase.table("alunos").select("*").eq("id_turma", id_turma).execute()
+        alunos = resp.data or []
+        alunos.sort(key=lambda a: a.get("numero_chamada") or a.get("id") or 0)
+
+        cards = ""
+        for a in alunos:
+            nome = a.get("nome") or a.get("nome_completo") or "Aluno"
+            num = a.get("numero_chamada") or ""
+            cards += f'''
+            <div class="etiqueta">
+                <img src="/api/qr/aluno/{a['id']}">
+                <div class="nome">{num}. {nome}</div>
+            </div>'''
+
+        html = f'''<!DOCTYPE html>
+        <html lang="pt-BR"><head><meta charset="UTF-8">
+        <title>Etiquetas QR - Turma {id_turma}</title>
+        <style>
+            @page {{ size: A4 portrait; margin: 8mm; }}
+            body {{ font-family: Arial; }}
+            .grade {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; }}
+            .etiqueta {{ border: 1px dashed #999; padding: 3mm; text-align: center; page-break-inside: avoid; }}
+            .etiqueta img {{ width: 30mm; height: 30mm; }}
+            .nome {{ font-size: 9px; font-weight: bold; margin-top: 1mm; }}
+            h1 {{ font-size: 12px; text-align: center; }}
+        </style></head><body>
+        <h1>ETIQUETAS QR DOS ALUNOS — recorte e cole no gabarito (ou lamine como cartão)</h1>
+        <div class="grade">{cards}</div>
+        </body></html>'''
+        return html
+    except Exception as e:
+        return f"<h1>Erro: {e}</h1>", 500
 
 # ==========================================================
 # 🏁 INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO)
