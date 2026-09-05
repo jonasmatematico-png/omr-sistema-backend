@@ -1,6 +1,6 @@
 # services/omr.py
-# OMR 4.9 - VERSÃO COMPLETA UNIFICADA
-# Borracha inteligente + Anti-QR + Ampliação de foto pequena + RAIO-X
+# OMR 4.9 FINAL - VERSÃO COMPLETA
+# Borracha inteligente + Anti-QR + Ampliação de foto + Multi-threshold + RAIO-X
 
 import cv2
 import numpy as np
@@ -49,9 +49,9 @@ def corrigir_orientacao(caminho_imagem):
 def esconder_qr_code(image, upload_dir):
     """
     BORRACHA INTELIGENTE:
-    - Leu o conteúdo E o retângulo é confiável (quase quadrado) → pinta de branco
-    - Leu o conteúdo mas retângulo suspeito → NÃO pinta (protege bolinhas)
-    - Não leu nada → ignora
+    - Leu o conteúdo E o retângulo é confiável (quase quadrado) -> pinta de branco
+    - Leu o conteúdo mas retângulo suspeito -> NÃO pinta (protege bolinhas)
+    - Não leu nada -> ignora
     Retorna o conteúdo do QR (ou None).
     """
     try:
@@ -113,17 +113,25 @@ def esconder_qr_code(image, upload_dir):
 def detectar_marcadores(image, upload_dir):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, thresh = cv2.threshold(blurred, 80, 255, cv2.THRESH_BINARY_INV)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    # 🛡️ MULTI-THRESHOLD: pega marcadores pretos (80), marrons (110) e claros (140)
+    # Assim a variação de LUZ não atrapalha mais!
     candidatos = []
-    for c in contours:
-        area = cv2.contourArea(c)
-        x, y, w, h = cv2.boundingRect(c)
-        aspect = w / float(h) if h > 0 else 0
-        solidez = area / (w * h) if w * h > 0 else 0
-        if 100 < area < 12000 and 0.6 < aspect < 1.4 and solidez > 0.7:
-            candidatos.append((area, (x + w / 2, y + h / 2)))
+    vistos = []
+    for thr in [80, 110, 140]:
+        _, thresh = cv2.threshold(blurred, thr, 255, cv2.THRESH_BINARY_INV)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in contours:
+            area = cv2.contourArea(c)
+            x, y, w, h = cv2.boundingRect(c)
+            aspect = w / float(h) if h > 0 else 0
+            solidez = area / (w * h) if w * h > 0 else 0
+            if 100 < area < 12000 and 0.6 < aspect < 1.4 and solidez > 0.7:
+                cx, cy = x + w / 2.0, y + h / 2.0
+                # evita duplicar o mesmo marcador entre thresholds
+                if all(((cx - px) ** 2 + (cy - py) ** 2) > 225 for px, py in vistos):
+                    vistos.append((cx, cy))
+                    candidatos.append((area, (cx, cy)))
 
     print(f"⬛ Candidatos a marcador: {len(candidatos)}")
 
@@ -233,7 +241,7 @@ def processar_imagem(caminho_imagem, gabarito_esperado):
     try:
         gabarito_esperado = list(gabarito_esperado)
         n_q = min(len(gabarito_esperado), 26)
-        print(f"🚨 OMR 4.9 — VERSÃO COMPLETA — lendo {n_q} 🚨")
+        print(f"🚨 OMR 4.9 FINAL — VERSÃO COMPLETA — lendo {n_q} 🚨")
 
         corrigir_orientacao(caminho_imagem)
 
