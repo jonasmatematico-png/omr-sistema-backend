@@ -1,5 +1,5 @@
 # app.py
-# OMR Sistema 2.0 - Backend Híbrido (Supabase + Câmera OMR)
+# OMR Sistema 2.0 - Backend Híbrido (Supabase + Câmera OMR + Gemini via Servidor)
 
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
@@ -7,6 +7,8 @@ from supabase import create_client, Client
 import os
 import io
 import qrcode
+import requests as rq_http   # <-- para chamar o Gemini
+import json as jsonlib
 
 # ==========================================================
 # 🔑 CRIAÇÃO DO OBJETO FLASK E CONFIGURAÇÃO INICIAL
@@ -22,6 +24,12 @@ SUPABASE_URL = "https://mkqnaiuplkqiitwxltli.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1rcW5haXVwbGtxaWl0d3hsdGxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzOTg5MzMsImV4cCI6MjA5OTk3NDkzM30.65MoDC1gMNpNs6bCKZlCTyCn2ijaaA6y9DOnQgNxacA"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ==========================================================
+# 🤖 CONFIGURAÇÃO DO GEMINI (chave segura via variável de ambiente)
+# ==========================================================
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODELO = os.environ.get("GEMINI_MODELO", "gemini-3.6-flash")
 
 # ==========================================================
 # 🚨 CARREGAMENTO E REGISTRO DO BLUEPRINT DE CORREÇÃO
@@ -451,13 +459,92 @@ def pagina_baixar_gabaritos():
         return html
     except Exception as e:
         return f"<h1>Erro: {e}</h1>", 500
-    
+
+# ==========================================================
+# 🤖 CORREÇÃO DISSERTATIVA AVANÇADA (v2 — múltiplas imagens via Gemini)
+# ==========================================================
+@app.route('/api/teste_gemini', methods=['GET'])
+def teste_gemini():
+    """Teste rápido: verifica se a chave e o modelo estão OK no servidor."""
+    if not GEMINI_API_KEY:
+        return jsonify({"sucesso": False, "erro": "GEMINI_API_KEY não configurada no servidor"}), 500
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent?key={GEMINI_API_KEY}"
+    try:
+        resp = rq_http.post(url, json={"contents": [{"parts": [{"text": "Responda apenas: OK"}]}]}, timeout=30)
+        if resp.status_code == 200:
+            return jsonify({"sucesso": True, "modelo": GEMINI_MODELO, "resposta": "OK"})
+        return jsonify({"sucesso": False, "erro": f"Gemini respondeu {resp.status_code}"}), 502
+    except Exception as e:
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+@app.route('/api/corrigir_dissertativa', methods=['POST'])
+def corrigir_dissertativa():
+    """
+    Recebe JSON do app:
+      - prompt: texto completo do prompt (já montado pelo app)
+      - imagens: lista de {"mime": "image/jpeg", "data": "base64..."}
+      - (opcional) modelo: "gemini-3.6-flash" (padrão)
+    Devolve o JSON com o texto bruto que o Gemini retornou.
+    """
+    try:
+        if not GEMINI_API_KEY:
+            return jsonify({"sucesso": False, "erro": "GEMINI_API_KEY não configurada no servidor"}), 500
+
+        dados = request.get_json() or {}
+        prompt = (dados.get('prompt') or '').strip()
+        imagens = dados.get('imagens') or []
+        modelo = dados.get('modelo') or GEMINI_MODELO
+
+        if not prompt:
+            return jsonify({"sucesso": False, "erro": "Envie 'prompt'"}), 400
+        if not imagens:
+            return jsonify({"sucesso": False, "erro": "Envie 'imagens' (lista)"}), 400
+
+        # Monta as partes: prompt + todas as imagens
+        parts = [{"text": prompt}]
+        for img in imagens:
+            mime = img.get('mime') or 'image/jpeg'
+            data = img.get('data') or ''
+            if data.startswith('data:'):
+                data = data.split(',', 1)[1] if ',' in data else ''
+            parts.append({"inline_data": {"mime_type": mime, "data": data}})
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={GEMINI_API_KEY}"
+        payload = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {
+                "temperature": 0.2,
+                "responseMimeType": "application/json",
+            },
+        }
+
+        print(f"🤖 [GEMINI v2] Corrigindo ({modelo}) — {len(imagens)} imagem(ns)...")
+        resp = rq_http.post(url, json=payload, timeout=180)
+
+        if resp.status_code == 429:
+            return jsonify({"sucesso": False, "erro": "Cota excedida (429). Tente novamente em 1 min."}), 429
+        if resp.status_code != 200:
+            print(f"❌ [GEMINI] Erro {resp.status_code}: {resp.text[:300]}")
+            return jsonify({"sucesso": False, "erro": f"Gemini erro {resp.status_code}"}), 502
+
+        saida = resp.json()
+        texto = saida["candidates"][0]["content"]["parts"][0]["text"]
+        print(f"✅ [GEMINI] Correção concluída!")
+        return jsonify({"sucesso": True, "texto": texto, "modelo": modelo})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
 # ==========================================================
 # 🏁 INICIALIZAÇÃO DO SERVIDOR
 # ==========================================================
 if __name__ == '__main__':
-    print("🚨🚨🚨 OMR SISTEMA 2.0 - HÍBRIDO (SUPABASE + CÂMERA) 🚨🚨🚨")
+    print("🚨🚨🚨 OMR SISTEMA 2.0 - HÍBRIDO (SUPABASE + CÂMERA + GEMINI) 🚨🚨🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
+    print(f"🤖 Gemini modelo: {GEMINI_MODELO}")
+    print(f"🔑 Gemini API Key: {'✅ configurada' if GEMINI_API_KEY else '❌ NÃO configurada!'}")
     port = int(os.environ.get("PORT", 10000))
     print(f"📡 Servidor rodando na porta: {port} (host: 0.0.0.0)")
     print(f"   Acessível em: http://0.0.0.0:{port}")
