@@ -1,5 +1,5 @@
 # app.py
-# OMR Sistema 2.0 - Backend Híbrido (Supabase + Câmera OMR + Gemini via Servidor)
+# OMR Sistema 2.0 - Backend Híbrido (Supabase + Câmera OMR + Gemini com Rotação Anti-Cota)
 
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
@@ -26,10 +26,21 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ==========================================================
-# 🤖 CONFIGURAÇÃO DO GEMINI (chave segura via variável de ambiente)
+# 🤖 CONFIGURAÇÃO DO GEMINI (MATRIZ ANTI-COTA: chaves × modelos!)
 # ==========================================================
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODELO = os.environ.get("GEMINI_MODELO", "gemini-3.6-flash")
+def _carregar_chaves_gemini():
+    """Lê GEMINI_API_KEYS (separadas por vírgula) ou usa GEMINI_API_KEY."""
+    multi = os.environ.get("GEMINI_API_KEYS", "")
+    if multi.strip():
+        return [c.strip() for c in multi.split(",") if c.strip()]
+    unica = os.environ.get("GEMINI_API_KEY", "")
+    return [unica] if unica.strip() else []
+
+GEMINI_CHAVES = _carregar_chaves_gemini()
+GEMINI_MODELOS = [m.strip() for m in os.environ.get(
+    "GEMINI_MODELOS",
+    "gemini-3.6-flash,gemini-2.5-flash,gemini-2.5-flash-lite"
+).split(",") if m.strip()]
 
 # ==========================================================
 # 🚨 CARREGAMENTO E REGISTRO DO BLUEPRINT DE CORREÇÃO
@@ -299,14 +310,12 @@ def gerar_gabaritos_turma(id_turma, id_prova):
 
         base = Image.open(base_path).convert('RGB')
 
-        # 🔽 Reduz a imagem base UMA vez (evita estourar a memória do Render)
         BASE_W = 1200
         _r = BASE_W / base.width
         base = base.resize((BASE_W, int(base.height * _r)), Image.LANCZOS)
 
         W, H = base.size
 
-        # Fonte (tenta as fontes do servidor Linux)
         fonte = None
         for fp in ['/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
                    '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
@@ -319,7 +328,6 @@ def gerar_gabaritos_turma(id_turma, id_prova):
         if fonte is None:
             fonte = ImageFont.load_default()
 
-        # Busca os dados
         resp_turma = supabase.table("turmas").select("nome").eq("id", id_turma).execute()
         if not resp_turma.data:
             return f"<h1>❌ Turma {id_turma} não encontrada!</h1>", 404
@@ -338,7 +346,6 @@ def gerar_gabaritos_turma(id_turma, id_prova):
 
         print(f"🎯 Gerando PDF: {len(alunos)} gabaritos ({turma_nome} / {prova_nome})")
 
-        # Carimba cada aluno na imagem original
         gabaritos = []
         for aluno in alunos:
             nome = aluno.get("nome") or aluno.get("nome_completo") or "Aluno"
@@ -346,12 +353,10 @@ def gerar_gabaritos_turma(id_turma, id_prova):
             img = base.copy()
             draw = ImageDraw.Draw(img)
 
-            # Nome impresso na faixa branca do TOPO
             draw.text((W * 0.06, H * 0.025),
                       f"Nome: {nome}    N°: {num}    Turma: {turma_nome}",
                       font=fonte, fill=(0, 0, 0))
 
-            # QR combo no espaço branco abaixo da coluna 4 (LONGE dos marcadores!)
             qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=2)
             qr.add_data(f'OMRALUNO:{id_prova}:{aluno["id"]}')
             qr.make(fit=True)
@@ -362,7 +367,6 @@ def gerar_gabaritos_turma(id_turma, id_prova):
 
             gabaritos.append(img)
 
-        # Monta o PDF: 3 gabaritos por folha A4
         DPI = 150
         AW, AH = int(210 / 25.4 * DPI), int(297 / 25.4 * DPI)
         paginas = []
@@ -461,39 +465,57 @@ def pagina_baixar_gabaritos():
         return f"<h1>Erro: {e}</h1>", 500
 
 # ==========================================================
-# 🤖 CORREÇÃO DISSERTATIVA AVANÇADA (v2 — múltiplas imagens via Gemini)
+# 🏓 ROTA PING (pro UptimeRobot manter servidor acordado!)
+# ==========================================================
+@app.route('/api/ping', methods=['GET'])
+def ping():
+    """Rota leve pro UptimeRobot manter o servidor acordado 24/7."""
+    return jsonify({
+        "sucesso": True,
+        "pong": "servidor acordado!",
+        "chaves": len(GEMINI_CHAVES),
+        "modelos": GEMINI_MODELOS
+    }), 200
+
+# ==========================================================
+# 🤖 CORREÇÃO DISSERTATIVA (v4 — MATRIZ ANTI-COTA: chaves × modelos!)
 # ==========================================================
 @app.route('/api/teste_gemini', methods=['GET'])
 def teste_gemini():
-    """Teste rápido: verifica se a chave e o modelo estão OK no servidor."""
-    if not GEMINI_API_KEY:
-        return jsonify({"sucesso": False, "erro": "GEMINI_API_KEY não configurada no servidor"}), 500
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent?key={GEMINI_API_KEY}"
-    try:
-        resp = rq_http.post(url, json={"contents": [{"parts": [{"text": "Responda apenas: OK"}]}]}, timeout=30)
-        if resp.status_code == 200:
-            return jsonify({"sucesso": True, "modelo": GEMINI_MODELO, "resposta": "OK"})
-        return jsonify({"sucesso": False, "erro": f"Gemini respondeu {resp.status_code}"}), 502
-    except Exception as e:
-        return jsonify({"sucesso": False, "erro": str(e)}), 500
+    """Teste rápido: verifica a matriz de chaves e modelos."""
+    if not GEMINI_CHAVES:
+        return jsonify({"sucesso": False, "erro": "Nenhuma chave configurada"}), 500
+    
+    resultados = []
+    for i, chave in enumerate(GEMINI_CHAVes):
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELOS[0]}:generateContent?key={chave}"
+        try:
+            resp = rq_http.post(url, json={"contents": [{"parts": [{"text": "OK"}]}]}, timeout=30)
+            status = "✅ OK" if resp.status_code == 200 else f"⚠️ {resp.status_code}"
+        except Exception as e:
+            status = f"❌ {e}"
+        resultados.append({"chave": i + 1, "status": status})
+    
+    return jsonify({
+        "sucesso": True,
+        "total_chaves": len(GEMINI_CHAVES),
+        "modelos": GEMINI_MODELOS,
+        "resultados": resultados
+    })
 
 @app.route('/api/corrigir_dissertativa', methods=['POST'])
 def corrigir_dissertativa():
     """
-    Recebe JSON do app:
-      - prompt: texto completo do prompt (já montado pelo app)
-      - imagens: lista de {"mime": "image/jpeg", "data": "base64..."}
-      - (opcional) modelo: "gemini-3.6-flash" (padrão)
-    Devolve o JSON com o texto bruto que o Gemini retornou.
+    Matriz anti-cota: tenta cada chave × cada modelo até uma funcionar!
+    Recebe: prompt, imagens[] e (opcional) modelo.
     """
     try:
-        if not GEMINI_API_KEY:
-            return jsonify({"sucesso": False, "erro": "GEMINI_API_KEY não configurada no servidor"}), 500
+        if not GEMINI_CHAVES:
+            return jsonify({"sucesso": False, "erro": "Nenhuma chave Gemini configurada no servidor"}), 500
 
         dados = request.get_json() or {}
         prompt = (dados.get('prompt') or '').strip()
         imagens = dados.get('imagens') or []
-        modelo = dados.get('modelo') or GEMINI_MODELO
 
         if not prompt:
             return jsonify({"sucesso": False, "erro": "Envie 'prompt'"}), 400
@@ -509,7 +531,6 @@ def corrigir_dissertativa():
                 data = data.split(',', 1)[1] if ',' in data else ''
             parts.append({"inline_data": {"mime_type": mime, "data": data}})
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={GEMINI_API_KEY}"
         payload = {
             "contents": [{"parts": parts}],
             "generationConfig": {
@@ -518,19 +539,46 @@ def corrigir_dissertativa():
             },
         }
 
-        print(f"🤖 [GEMINI v2] Corrigindo ({modelo}) — {len(imagens)} imagem(ns)...")
-        resp = rq_http.post(url, json=payload, timeout=180)
+        print(f"🤖 [GEMINI v4] {len(imagens)} imagem(ns) | {len(GEMINI_CHAVES)} chave(s) × {len(GEMINI_MODELOS)} modelo(s)")
 
-        if resp.status_code == 429:
-            return jsonify({"sucesso": False, "erro": "Cota excedida (429). Tente novamente em 1 min."}), 429
-        if resp.status_code != 200:
-            print(f"❌ [GEMINI] Erro {resp.status_code}: {resp.text[:300]}")
-            return jsonify({"sucesso": False, "erro": f"Gemini erro {resp.status_code}"}), 502
+        # MATRIZ: para cada chave, tenta cada modelo
+        ultimo_erro = None
+        for i, chave in enumerate(GEMINI_CHAVES):
+            for modelo in GEMINI_MODELOS:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={chave}"
+                try:
+                    resp = rq_http.post(url, json=payload, timeout=180)
+                except Exception as e:
+                    ultimo_erro = f"Chave {i+1}/{modelo}: rede ({e})"
+                    continue
 
-        saida = resp.json()
-        texto = saida["candidates"][0]["content"]["parts"][0]["text"]
-        print(f"✅ [GEMINI] Correção concluída!")
-        return jsonify({"sucesso": True, "texto": texto, "modelo": modelo})
+                if resp.status_code == 429:
+                    print(f"🔑 [GEMINI] Chave {i+1} + {modelo} sem cota (429) — pulando...")
+                    ultimo_erro = f"Chave {i+1}/{modelo}: 429"
+                    continue
+
+                if resp.status_code != 200:
+                    print(f"❌ [GEMINI] Chave {i+1}/{modelo} erro {resp.status_code}: {resp.text[:200]}")
+                    ultimo_erro = f"Chave {i+1}/{modelo}: erro {resp.status_code}"
+                    continue
+
+                # SUCESSO!
+                saida = resp.json()
+                texto = saida["candidates"][0]["content"]["parts"][0]["text"]
+                print(f"✅ [GEMINI] Correção concluída com chave {i+1} + modelo {modelo}!")
+                return jsonify({
+                    "sucesso": True,
+                    "texto": texto,
+                    "modelo": modelo,
+                    "chave_usada": i + 1
+                })
+
+        # Todas falharam
+        print(f"❌ [GEMINI] Toda a matriz falhou. Último: {ultimo_erro}")
+        return jsonify({
+            "sucesso": False,
+            "erro": f"Todas as {len(GEMINI_CHAVES)} chave(s) × {len(GEMINI_MODELOS)} modelo(s) sem cota. Último erro: {ultimo_erro}"
+        }), 429
 
     except Exception as e:
         import traceback
@@ -541,10 +589,10 @@ def corrigir_dissertativa():
 # 🏁 INICIALIZAÇÃO DO SERVIDOR
 # ==========================================================
 if __name__ == '__main__':
-    print("🚨🚨🚨 OMR SISTEMA 2.0 - HÍBRIDO (SUPABASE + CÂMERA + GEMINI) 🚨🚨🚨")
+    print("🚨🚨🚨 OMR SISTEMA 2.0 - MATRIZ ANTI-COTA 🚨🚨🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
-    print(f"🤖 Gemini modelo: {GEMINI_MODELO}")
-    print(f"🔑 Gemini API Key: {'✅ configurada' if GEMINI_API_KEY else '❌ NÃO configurada!'}")
+    print(f"🔑 Gemini chaves: {len(GEMINI_CHAVES)} configurada(s)")
+    print(f"🤖 Gemini modelos: {GEMINI_MODELOS}")
     port = int(os.environ.get("PORT", 10000))
     print(f"📡 Servidor rodando na porta: {port} (host: 0.0.0.0)")
     print(f"   Acessível em: http://0.0.0.0:{port}")
