@@ -9,6 +9,7 @@ import io
 import qrcode
 import requests as rq_http   # <-- para chamar o Gemini
 import json as jsonlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==========================================================
 # 🔑 CRIAÇÃO DO OBJETO FLASK E CONFIGURAÇÃO INICIAL
@@ -581,6 +582,137 @@ def corrigir_dissertativa():
             "erro": f"Todas as {len(GEMINI_CHAVES)} chave(s) × {len(GEMINI_MODELOS)} modelo(s) sem cota. Último erro: {ultimo_erro}"
         }), 429
 
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+    
+# ==========================================================
+# 📦 CORREÇÃO EM LOTE (Modo Lote - várias provas em paralelo!)
+# ==========================================================
+@app.route('/api/corrigir_lote', methods=['POST'])
+def corrigir_lote():
+    """
+    Recebe array de provas e corrige em paralelo (4 threads).
+    Cada prova tem: {
+        "id_aluno": 123,
+        "nome_aluno": "João",
+        "prompt": "texto do prompt",
+        "imagens": [{"mime": "image/jpeg", "data": "base64..."}]
+    }
+    Retorna array com resultados individuais.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    try:
+        if not GEMINI_CHAVES:
+            return jsonify({"sucesso": False, "erro": "Nenhuma chave configurada"}), 500
+
+        dados = request.get_json() or {}
+        provas = dados.get('provas') or []
+        
+        if not provas:
+            return jsonify({"sucesso": False, "erro": "Envie 'provas' (lista)"}), 400
+        
+        print(f"📦 [LOTE] Recebidas {len(provas)} prova(s) para correção em paralelo")
+        
+        # Função que corrige UMA prova (vai rodar em thread)
+        def corrigir_uma_prova(prova):
+            id_aluno = prova.get('id_aluno')
+            nome_aluno = prova.get('nome_aluno', 'Sem nome')
+            prompt = (prova.get('prompt') or '').strip()
+            imagens = prova.get('imagens') or []
+            
+            if not prompt or not imagens:
+                return {
+                    "id_aluno": id_aluno,
+                    "nome_aluno": nome_aluno,
+                    "sucesso": False,
+                    "erro": "Prompt ou imagens faltando"
+                }
+            
+            # Monta as partes: prompt + imagens
+            parts = [{"text": prompt}]
+            for img in imagens:
+                mime = img.get('mime') or 'image/jpeg'
+                data = img.get('data') or ''
+                if data.startswith('data:'):
+                    data = data.split(',', 1)[1] if ',' in data else ''
+                parts.append({"inline_data": {"mime_type": mime, "data": data}})
+            
+            payload = {
+                "contents": [{"parts": parts}],
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "responseMimeType": "application/json",
+                },
+            }
+            
+            # MATRIZ ANTI-COTA (igual à rota individual)
+            for modelo in GEMINI_MODELOS:
+                for i, chave in enumerate(GEMINI_CHAVES):
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={chave}"
+                    try:
+                        resp = rq_http.post(url, json=payload, timeout=180)
+                    except Exception as e:
+                        continue
+                    
+                    if resp.status_code == 429:
+                        continue
+                    
+                    if resp.status_code != 200:
+                        continue
+                    
+                    # SUCESSO!
+                    saida = resp.json()
+                    texto = saida["candidates"][0]["content"]["parts"][0]["text"]
+                    return {
+                        "id_aluno": id_aluno,
+                        "nome_aluno": nome_aluno,
+                        "sucesso": True,
+                        "texto": texto,
+                        "modelo": modelo,
+                        "chave_usada": i + 1
+                    }
+            
+            # Todas falharam
+            return {
+                "id_aluno": id_aluno,
+                "nome_aluno": nome_aluno,
+                "sucesso": False,
+                "erro": "Todas as chaves/modelos sem cota"
+            }
+        
+        # Processa em paralelo (4 threads ao mesmo tempo)
+        resultados = []
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            # Submete todas as provas
+            futures = {executor.submit(corrigir_uma_prova, prova): prova for prova in provas}
+            
+            # Coleta resultados conforme ficam prontos
+            for future in as_completed(futures):
+                resultado = future.result()
+                resultados.append(resultado)
+                status = "✅" if resultado.get('sucesso') else "❌"
+                print(f"{status} [LOTE] {resultado.get('nome_aluno')}")
+        
+        # Ordena resultados pelo id_aluno (pra manter a ordem da turma)
+        resultados.sort(key=lambda r: r.get('id_aluno') or 0)
+        
+        # Conta sucessos e falhas
+        sucessos = sum(1 for r in resultados if r.get('sucesso'))
+        falhas = len(resultados) - sucessos
+        
+        print(f"📦 [LOTE] Concluído: {sucessos} sucesso(s), {falhas} falha(s)")
+        
+        return jsonify({
+            "sucesso": True,
+            "total": len(resultados),
+            "sucessos": sucessos,
+            "falhas": falhas,
+            "resultados": resultados
+        })
+    
     except Exception as e:
         import traceback
         traceback.print_exc()
