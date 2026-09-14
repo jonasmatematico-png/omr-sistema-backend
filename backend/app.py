@@ -1,5 +1,5 @@
 # app.py
-# OMR Sistema 2.0 - Backend Híbrido (Supabase + Câmera OMR + Gemini com Rotação Anti-Cota)
+# OMR Sistema 2.0 - Backend Híbrido (Supabase + Câmera OMR + Gemini com Rotação Anti-Cota OTIMIZADA)
 
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
@@ -478,7 +478,7 @@ def ping():
     }), 200
 
 # ==========================================================
-# 🤖 CORREÇÃO DISSERTATIVA (v4 — MATRIZ ANTI-COTA: chaves × modelos!)
+# 🤖 CORREÇÃO DISSERTATIVA (v5 — MATRIZ OTIMIZADA: modelo → chave!)
 # ==========================================================
 @app.route('/api/teste_gemini', methods=['GET'])
 def teste_gemini():
@@ -487,7 +487,7 @@ def teste_gemini():
         return jsonify({"sucesso": False, "erro": "Nenhuma chave configurada"}), 500
     
     resultados = []
-    for i, chave in enumerate(GEMINI_CHAVes):
+    for i, chave in enumerate(GEMINI_CHAVES):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELOS[0]}:generateContent?key={chave}"
         try:
             resp = rq_http.post(url, json={"contents": [{"parts": [{"text": "OK"}]}]}, timeout=30)
@@ -506,8 +506,8 @@ def teste_gemini():
 @app.route('/api/corrigir_dissertativa', methods=['POST'])
 def corrigir_dissertativa():
     """
-    Matriz anti-cota: tenta cada chave × cada modelo até uma funcionar!
-    Recebe: prompt, imagens[] e (opcional) modelo.
+    Matriz anti-cota OTIMIZADA: para cada modelo, tenta todas as chaves.
+    Assim usa as 9 chaves no modelo principal antes de cair pro secundário.
     """
     try:
         if not GEMINI_CHAVES:
@@ -539,12 +539,13 @@ def corrigir_dissertativa():
             },
         }
 
-        print(f"🤖 [GEMINI v4] {len(imagens)} imagem(ns) | {len(GEMINI_CHAVES)} chave(s) × {len(GEMINI_MODELOS)} modelo(s)")
+        print(f"🤖 [GEMINI v5 OTIMIZADO] {len(imagens)} imagem(ns) | {len(GEMINI_CHAVES)} chave(s) × {len(GEMINI_MODELOS)} modelo(s)")
 
-        # MATRIZ: para cada chave, tenta cada modelo
+        # MATRIZ OTIMIZADA: para cada MODELO, tenta todas as CHAVES
+        # Assim usa as 9 chaves no modelo principal antes de cair pro secundário
         ultimo_erro = None
-        for i, chave in enumerate(GEMINI_CHAVES):
-            for modelo in GEMINI_MODELOS:
+        for modelo in GEMINI_MODELOS:
+            for i, chave in enumerate(GEMINI_CHAVES):
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={chave}"
                 try:
                     resp = rq_http.post(url, json=payload, timeout=180)
@@ -589,7 +590,7 @@ def corrigir_dissertativa():
 # 🏁 INICIALIZAÇÃO DO SERVIDOR
 # ==========================================================
 if __name__ == '__main__':
-    print("🚨🚨🚨 OMR SISTEMA 2.0 - MATRIZ ANTI-COTA 🚨🚨🚨")
+    print("🚨🚨🚨 OMR SISTEMA 2.0 - MATRIZ ANTI-COTA OTIMIZADA 🚨🚨🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
     print(f"🔑 Gemini chaves: {len(GEMINI_CHAVES)} configurada(s)")
     print(f"🤖 Gemini modelos: {GEMINI_MODELOS}")
