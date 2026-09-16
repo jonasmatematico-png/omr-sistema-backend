@@ -1001,11 +1001,11 @@ def gerar_relatorio_aluno(id_aluno, id_avaliacao):
         return f"<h1>❌ Erro ao gerar relatório: {e}</h1>", 500
 
 # ==========================================================
-# 📄 NOVA: RELATÓRIO PDF DA TURMA (resumo de todos os alunos)
+# 📄 RELATÓRIO PDF DA TURMA (v2 — COMPLETO E PERFEITO!)
 # ==========================================================
 @app.route('/api/relatorio/turma/<int:id_turma>/<int:id_avaliacao>', methods=['GET'])
 def gerar_relatorio_turma(id_turma, id_avaliacao):
-    """Gera PDF com resumo das notas de todos os alunos da turma."""
+    """Gera PDF completo com estatísticas, top 3 e alunos que precisam de atenção."""
     if not PDF_OK:
         return jsonify({"sucesso": False, "erro": "ReportLab não instalado"}), 500
     
@@ -1032,8 +1032,15 @@ def gerar_relatorio_turma(id_turma, id_avaliacao):
             'TituloCustom', parent=styles['Title'],
             fontSize=18, textColor=HexColor('#4A148C'), spaceAfter=12
         )
+        subtitulo_style = ParagraphStyle(
+            'SubtituloCustom', parent=styles['Heading2'],
+            fontSize=14, textColor=HexColor('#FF6F00'),
+            spaceBefore=16, spaceAfter=8
+        )
         
         elementos = []
+        
+        # ========== CABEÇALHO ==========
         elementos.append(Paragraph("📊 RELATÓRIO DE DESEMPENHO DA TURMA", titulo_style))
         elementos.append(Paragraph(
             f"<b>Turma:</b> {turma.get('nome')} | <b>Avaliação:</b> {avaliacao.get('nome')}",
@@ -1045,7 +1052,9 @@ def gerar_relatorio_turma(id_turma, id_avaliacao):
         ))
         elementos.append(Spacer(1, 16))
         
-        # Tabela de alunos
+        # ========== LISTA DE ALUNOS ==========
+        elementos.append(Paragraph("📋 LISTA DE ALUNOS", subtitulo_style))
+        
         dados_tabela = [['Nº', 'Aluno', 'Nota', 'Nível']]
         
         for aluno in alunos:
@@ -1077,39 +1086,196 @@ def gerar_relatorio_turma(id_turma, id_avaliacao):
             ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
         ]))
         elementos.append(tabela)
+        elementos.append(Spacer(1, 16))
         
-        # Estatísticas da turma
+        # ========== ESTATÍSTICAS GERAIS ==========
+        total_alunos_turma = len(alunos)
         notas = [r.get('nota_bruta', 0) for r in resultados.values() if r.get('nota_bruta') is not None]
+        alunos_que_fizeram = len(notas)
+        alunos_que_faltaram = total_alunos_turma - alunos_que_fizeram
+        percentual_participacao = (alunos_que_fizeram / total_alunos_turma * 100) if total_alunos_turma > 0 else 0
+        
+        elementos.append(Paragraph("📈 ESTATÍSTICAS GERAIS", subtitulo_style))
+        
+        stats_data = [
+            ['Total de alunos na turma:', str(total_alunos_turma)],
+            ['✅ Alunos que FIZERAM a prova:', str(alunos_que_fizeram)],
+            ['❌ Alunos que NÃO fizeram:', str(alunos_que_faltaram)],
+            ['📊 Percentual de participação:', f'{percentual_participacao:.1f}%'],
+        ]
+        
         if notas:
             media = sum(notas) / len(notas)
             maior = max(notas)
             menor = min(notas)
-            
+            stats_data.extend([
+                ['Média da turma:', f'{media:.2f}'],
+                ['Maior nota:', f'{maior:.2f}'],
+                ['Menor nota:', f'{menor:.2f}'],
+            ])
+        
+        tabela_stats = Table(stats_data, colWidths=[8*cm, 5*cm])
+        tabela_stats.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), HexColor('#FFF3E0')),
+            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#FF6F00')),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING', (0, 0), (-1, -1), 10),
+        ]))
+        elementos.append(tabela_stats)
+        
+        if notas:
+            # ========== DISTRIBUIÇÃO DE NOTAS (GRÁFICO VISUAL) ==========
             elementos.append(Spacer(1, 16))
-            elementos.append(Paragraph("📈 ESTATÍSTICAS DA TURMA", titulo_style))
+            elementos.append(Paragraph("📊 DISTRIBUIÇÃO DE NOTAS", subtitulo_style))
             
-            stats_data = [
-                ['Alunos corrigidos:', str(len(notas))],
-                ['Média da turma:', f'{media:.1f}'],
-                ['Maior nota:', f'{maior:.1f}'],
-                ['Menor nota:', f'{menor:.1f}'],
+            # Classifica cada aluno numa faixa
+            avancado = [n for n in notas if n >= 8]
+            adequado = [n for n in notas if 6 <= n < 8]
+            basico = [n for n in notas if 4 <= n < 6]
+            abaixo = [n for n in notas if n < 4]
+            
+            max_count = max(len(avancado), len(adequado), len(basico), len(abaixo)) or 1
+            
+            def barra(count, cor):
+                """Gera uma 'barra' visual com blocos coloridos."""
+                bloco_count = int((count / max_count) * 15) or (1 if count > 0 else 0)
+                return Paragraph(
+                    f'<font color="{cor}">{"█" * bloco_count}</font> {count}',
+                    ParagraphStyle('Barra', parent=styles['Normal'], fontSize=12)
+                )
+            
+            dist_data = [
+                ['Faixa de nota', 'Nível', 'Alunos', 'Distribuição'],
+                ['8 a 10', 'Avançado', str(len(avancado)), barra(len(avancado), '#2E7D32')],
+                ['6 a 8', 'Adequado', str(len(adequado)), barra(len(adequado), '#388E3C')],
+                ['4 a 6', 'Básico', str(len(basico)), barra(len(basico), '#F57C00')],
+                ['0 a 4', 'Abaixo do Básico', str(len(abaixo)), barra(len(abaixo), '#C62828')],
             ]
             
-            tabela_stats = Table(stats_data, colWidths=[6*cm, 4*cm])
-            tabela_stats.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, -1), HexColor('#FFF3E0')),
-                ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#FF6F00')),
-                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-                ('TOPPADDING', (0, 0), (-1, -1), 6),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-                ('LEFTPADDING', (0, 0), (-1, -1), 10),
+            tabela_dist = Table(dist_data, colWidths=[3*cm, 4*cm, 2*cm, 8*cm])
+            tabela_dist.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), HexColor('#4A148C')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('ALIGN', (0, 0), (2, -1), 'CENTER'),
+                ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#9C27B0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F3E5F5')]),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
             ]))
-            elementos.append(tabela_stats)
+            elementos.append(tabela_dist)
+            
+            # ========== TOP 3 MELHORES ALUNOS ==========
+            elementos.append(Spacer(1, 16))
+            elementos.append(Paragraph("🏆 TOP 3 MELHORES NOTAS", subtitulo_style))
+            
+            # Ordena resultados por nota (decrescente)
+            ranking = []
+            for aluno in alunos:
+                res = resultados.get(aluno['id'])
+                if res and res.get('nota_bruta') is not None:
+                    ranking.append({
+                        'nome': aluno.get('nome_completo', 'Aluno'),
+                        'nota': float(res.get('nota_bruta', 0)),
+                        'num': aluno.get('numero_chamada', '-')
+                    })
+            ranking.sort(key=lambda x: x['nota'], reverse=True)
+            top3 = ranking[:3]
+            
+            medalhas = ['🥇', '🥈', '🥉']
+            top_data = [['Posição', 'Aluno', 'Nota']]
+            for i, aluno in enumerate(top3):
+                top_data.append([
+                    f'{medalhas[i]} {i+1}º lugar',
+                    aluno['nome'],
+                    f'{aluno["nota"]:.2f}'
+                ])
+            
+            tabela_top = Table(top_data, colWidths=[3.5*cm, 10.5*cm, 3*cm])
+            tabela_top.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), HexColor('#FFD700')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), black),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 11),
+                ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+                ('ALIGN', (2, 0), (2, -1), 'CENTER'),
+                ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#FFA000')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [HexColor('#FFF9C4'), white]),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ]))
+            elementos.append(tabela_top)
+            
+            # ========== ALUNOS QUE PRECISAM DE ATENÇÃO ==========
+            alunos_atencao = []
+            for aluno in alunos:
+                res = resultados.get(aluno['id'])
+                if res and res.get('nota_bruta') is not None:
+                    nota = float(res.get('nota_bruta', 0))
+                    if nota < 4:
+                        alunos_atencao.append({
+                            'nome': aluno.get('nome_completo', 'Aluno'),
+                            'nota': nota,
+                            'nivel': res.get('nivel_saeb', 'Abaixo do Básico')
+                        })
+            
+            if alunos_atencao:
+                alunos_atencao.sort(key=lambda x: x['nota'])
+                
+                elementos.append(Spacer(1, 16))
+                elementos.append(Paragraph(
+                    f"⚠️ ALUNOS QUE PRECISAM DE ATENÇÃO ({len(alunos_atencao)})",
+                    subtitulo_style
+                ))
+                
+                atencao_data = [['Aluno', 'Nota', 'Nível']]
+                for a in alunos_atencao:
+                    atencao_data.append([
+                        a['nome'],
+                        f'{a["nota"]:.2f}',
+                        a['nivel']
+                    ])
+                
+                tabela_atencao = Table(atencao_data, colWidths=[10*cm, 3*cm, 4*cm])
+                tabela_atencao.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), HexColor('#C62828')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('ALIGN', (1, 0), (2, -1), 'CENTER'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#EF5350')),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [HexColor('#FFEBEE'), white]),
+                    ('TOPPADDING', (0, 0), (-1, -1), 6),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ]))
+                elementos.append(tabela_atencao)
+                
+                elementos.append(Spacer(1, 8))
+                elementos.append(Paragraph(
+                    "<i>💡 Sugestão: Agendar atendimento individualizado e reforço específico para estes alunos.</i>",
+                    ParagraphStyle('Sugestao', parent=styles['Normal'], fontSize=9,
+                                   textColor=HexColor('#555555'), alignment=TA_LEFT)
+                ))
+        
+        # ========== RODAPÉ ==========
+        elementos.append(Spacer(1, 20))
+        elementos.append(Paragraph(
+            "<i>Este relatório foi gerado automaticamente pelo OMR Sistema 2.0.</i>",
+            ParagraphStyle('Rodape', parent=styles['Normal'], fontSize=9,
+                           textColor=HexColor('#777777'), alignment=TA_CENTER)
+        ))
         
         doc.build(elementos)
         buf.seek(0)
         
-        nome_turma_seguro = ''.join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in turma.get('nome', 'turma'))
+        nome_turma_seguro = ''.join(
+            c if c.isalnum() or c in (' ', '_', '-') else '_'
+            for c in turma.get('nome', 'turma')
+        )
         
         return send_file(
             buf,
