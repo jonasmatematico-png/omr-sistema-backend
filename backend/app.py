@@ -468,6 +468,86 @@ def pagina_baixar_gabaritos():
         return f"<h1>Erro: {e}</h1>", 500
 
 # ==========================================================
+# 📄 PÁGINA DE RELATÓRIOS (acesso quando quiser!)
+# ==========================================================
+@app.route('/relatorios', methods=['GET'])
+def pagina_relatorios():
+    try:
+        resp_turmas = supabase.table("turmas").select("id, nome").order("id").execute()
+        turmas = resp_turmas.data or []
+        resp_avs = supabase.table("avaliacoes").select("id, nome").order("id").execute()
+        avs = resp_avs.data or []
+
+        opts_t = "".join(f'<option value="{t["id"]}">{t["nome"]}</option>' for t in turmas)
+        opts_a = "".join(f'<option value="{a["id"]}">{a["nome"]}</option>' for a in avs)
+
+        html = f'''<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📄 Relatórios</title>
+<style>
+  body {{ font-family: Arial; background:#f2f4ff; display:flex; justify-content:center; padding:20px; }}
+  .card {{ background:#fff; border-radius:16px; box-shadow:0 4px 20px rgba(0,0,0,.12); padding:28px; max-width:420px; width:100%; }}
+  h1 {{ font-size:20px; text-align:center; color:#4A148C; }}
+  label {{ font-weight:bold; display:block; margin:14px 0 6px; color:#333; }}
+  select {{ width:100%; padding:12px; border-radius:8px; border:1px solid #bbb; font-size:15px; }}
+  button {{ width:100%; margin-top:14px; padding:14px; border:none; border-radius:10px; font-size:15px; font-weight:bold; color:#fff; cursor:pointer; }}
+  .btn-turma {{ background:#4A148C; }}
+  .btn-aluno {{ background:#FF6F00; }}
+  button:active {{ opacity:.8; }}
+  p.dica {{ font-size:12px; color:#777; text-align:center; margin-top:14px; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>📄 Relatórios (quando quiser!)</h1>
+  <label>1️⃣ Turma:</label>
+  <select id="turma" onchange="carregarAlunos()">{opts_t}</select>
+  <label>2️⃣ Avaliação (prova):</label>
+  <select id="prova">{opts_a}</select>
+  <label>3️⃣ Aluno (só pro PDF individual):</label>
+  <select id="aluno"><option value="">-- Escolha a turma primeiro --</option></select>
+  <button class="btn-turma" onclick="pdfTurma()">📊 PDF DA TURMA (completo)</button>
+  <button class="btn-aluno" onclick="pdfAluno()">📝 PDF DO ALUNO (individual)</button>
+  <p class="dica">Os relatórios usam os dados salvos no banco — podem ser gerados a qualquer momento!</p>
+</div>
+<script>
+  async function carregarAlunos() {{
+    const t = document.getElementById('turma').value;
+    const sel = document.getElementById('aluno');
+    sel.innerHTML = '<option value="">Carregando...</option>';
+    try {{
+      const r = await fetch('/api/turmas/' + t + '/alunos');
+      const j = await r.json();
+      sel.innerHTML = '<option value="">-- Escolha o aluno --</option>';
+      (j.alunos || []).forEach(a => {{
+        sel.innerHTML += '<option value="' + a.id + '">' + a.nome + '</option>';
+      }});
+    }} catch (e) {{
+      sel.innerHTML = '<option value="">Erro ao carregar</option>';
+    }}
+  }}
+  function pdfTurma() {{
+    const t = document.getElementById('turma').value;
+    const p = document.getElementById('prova').value;
+    window.open('/api/relatorio/turma/' + t + '/' + p, '_blank');
+  }}
+  function pdfAluno() {{
+    const a = document.getElementById('aluno').value;
+    const p = document.getElementById('prova').value;
+    if (!a) {{ alert('Escolha o aluno primeiro!'); return; }}
+    window.open('/api/relatorio/aluno/' + a + '/' + p, '_blank');
+  }}
+</script>
+</body>
+</html>'''
+        return html
+    except Exception as e:
+        return f"<h1>Erro: {e}</h1>", 500
+
+# ==========================================================
 # 🏓 ROTA PING (UptimeRobot)
 # ==========================================================
 @app.route('/api/ping', methods=['GET'])
@@ -813,7 +893,39 @@ def gerar_relatorio_aluno(id_aluno, id_avaliacao):
         detalhes = r_det.data or []
         
         if not detalhes:
-            return f"<h1>❌ Nenhuma correção salva para {aluno.get('nome_completo', 'Aluno')}!</h1>", 404
+            # Fallback: relatório simples com a nota salva em "resultados"
+            r_res = supabase.table("resultados").select("*") \
+                .eq("id_aluno", id_aluno) \
+                .eq("id_avaliacao", id_avaliacao) \
+                .maybe_single().execute()
+            if not r_res.data:
+                return f"<h1>❌ Nenhuma correção salva para {aluno.get('nome_completo', 'Aluno')}!</h1>", 404
+            res = r_res.data
+            buf = io.BytesIO()
+            doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=1.5*cm, leftMargin=1.5*cm,
+                                    topMargin=1.5*cm, bottomMargin=1.5*cm)
+            styles = getSampleStyleSheet()
+            elementos = [
+                Paragraph("📝 RELATÓRIO DE DESEMPENHO", styles['Title']),
+                Paragraph(f"<b>Aluno(a):</b> {aluno.get('nome_completo', 'Sem nome')}", styles['Normal']),
+                Paragraph(f"<b>Avaliação:</b> {avaliacao.get('nome', 'Avaliação')}", styles['Normal']),
+                Paragraph(f"<b>Gerado em:</b> {datetime.now().strftime('%d/%m/%Y às %H:%M')}", styles['Normal']),
+                Spacer(1, 16),
+                Paragraph(f"<b>Nota:</b> {float(res.get('nota_bruta') or 0):.1f} de 10,0", styles['Heading3']),
+                Paragraph(f"<b>Nível:</b> {res.get('nivel_saeb', '-')}", styles['Normal']),
+                Paragraph(f"<b>Devolutiva:</b> {res.get('devolutiva', '-')}", styles['Normal']),
+                Spacer(1, 16),
+                Paragraph("<i>Observação: esta correção foi salva antes do registro detalhado por questão, "
+                          "por isso não há transcrições e justificativas nesta prova.</i>", styles['Normal']),
+            ]
+            doc.build(elementos)
+            buf.seek(0)
+            nome_aluno_seguro = ''.join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in aluno.get('nome_completo', 'aluno'))
+            timestamp = datetime.now().strftime('%d%m_%H%M')
+            resposta = send_file(buf, mimetype='application/pdf', as_attachment=True,
+                                 download_name=f'relatorio_{nome_aluno_seguro}_prova{id_avaliacao}_{timestamp}.pdf')
+            resposta.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+            return resposta
         
         # Monta o PDF
         buf = io.BytesIO()
@@ -1029,7 +1141,8 @@ def gerar_relatorio_turma(id_turma, id_avaliacao):
         alunos = r_alunos.data or []
         
         r_res = supabase.table("resultados").select("*").eq("id_avaliacao", id_avaliacao).execute()
-        resultados = {r['id_aluno']: r for r in (r_res.data or [])}
+        ids_alunos_turma = {a['id'] for a in alunos}
+        resultados = {r['id_aluno']: r for r in (r_res.data or []) if r['id_aluno'] in ids_alunos_turma}
         
         buf = io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=1.5*cm, leftMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
