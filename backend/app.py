@@ -1,5 +1,5 @@
 # app.py
-# OMR Sistema 2.0 - Backend Híbrido (Supabase + Câmera OMR + Gemini com Rotação Anti-Cota OTIMIZADA)
+# OMR Sistema 2.0 - Backend Completo (Supabase + Câmera OMR + Gemini + Relatórios PDF)
 
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
@@ -7,14 +7,31 @@ from supabase import create_client, Client
 import os
 import io
 import qrcode
-import requests as rq_http   # <-- para chamar o Gemini
+import requests as rq_http
 import json as jsonlib
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+
+# ==========================================================
+# 📄 RELATÓRIOS PDF (Etapa 2!)
+# ==========================================================
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib.colors import HexColor, black, white
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    )
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    PDF_OK = True
+    print("✅ ReportLab carregado — Relatórios PDF ativos!")
+except ImportError:
+    PDF_OK = False
+    print("⚠️ ReportLab NÃO instalado — Relatórios PDF desativados")
 
 # ==========================================================
 # 🔑 CRIAÇÃO DO OBJETO FLASK E CONFIGURAÇÃO INICIAL
 # ==========================================================
-
 app = Flask(__name__)
 CORS(app)
 
@@ -46,7 +63,6 @@ GEMINI_MODELOS = [m.strip() for m in os.environ.get(
 # ==========================================================
 # 🚨 CARREGAMENTO E REGISTRO DO BLUEPRINT DE CORREÇÃO
 # ==========================================================
-
 from routes.corrigir import corrigir_bp
 print("DEBUG: Blueprint 'corrigir_bp' importado com sucesso.")
 app.register_blueprint(corrigir_bp)
@@ -202,11 +218,8 @@ def salvar_gabarito():
         questoes = dados.get('questoes', [])
         print(f"🟢 [PYTHON] Recebido gabarito para avaliação {id_avaliacao}: {len(questoes)} questões")
 
-        print("🟡 [PYTHON] Passo 1: Deletando questões antigas...")
         supabase.table("questoes").delete().eq("id_avaliacao", id_avaliacao).execute()
-        print("🟢 [PYTHON] Passo 1 concluído.")
 
-        print("🟡 [PYTHON] Passo 2: Preparando dados para inserção...")
         dados_para_inserir = []
         for q in questoes:
             dados_para_inserir.append({
@@ -217,15 +230,11 @@ def salvar_gabarito():
                 "nivel": q.get('nivel', 'Básico'),
                 "descritor": q.get('descritor', '')
             })
-        print(f"🟢 [PYTHON] Passo 2 concluído. {len(dados_para_inserir)} itens preparados.")
 
-        print("🟡 [PYTHON] Passo 3: Inserindo no Supabase...")
         if dados_para_inserir:
             response = supabase.table("questoes").insert(dados_para_inserir).execute()
-            print(f"🟢 [PYTHON] Passo 3 concluído! {len(response.data)} questões salvas.")
             return jsonify({"sucesso": True, "mensagem": "Gabarito salvo!"}), 201
         else:
-            print("🔴 [PYTHON] Nenhuma questão para salvar.")
             return jsonify({"sucesso": False, "erro": "Nenhuma questão para salvar"}), 400
 
     except Exception as e:
@@ -250,7 +259,7 @@ def list_debug_images():
     return jsonify({"arquivos": arquivos})
 
 # ==========================================================
-# 📱 QR CODE DA AVALIAÇÃO
+# 📱 QR CODES
 # ==========================================================
 @app.route('/api/qr/<int:id_avaliacao>', methods=['GET'])
 def gerar_qr_avaliacao(id_avaliacao):
@@ -261,12 +270,8 @@ def gerar_qr_avaliacao(id_avaliacao):
     buf = io.BytesIO()
     img.save(buf, format='PNG')
     buf.seek(0)
-    print(f"📱 QR gerado para avaliação {id_avaliacao}")
     return send_file(buf, mimetype='image/png')
 
-# ==========================================================
-# 📱 QR DO ALUNO (sticker/cartão permanente)
-# ==========================================================
 @app.route('/api/qr/aluno/<int:id_aluno>', methods=['GET'])
 def gerar_qr_aluno(id_aluno):
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=2)
@@ -278,9 +283,6 @@ def gerar_qr_aluno(id_aluno):
     buf.seek(0)
     return send_file(buf, mimetype='image/png')
 
-# ==========================================================
-# 📱 QR COMBO (prova + aluno)
-# ==========================================================
 @app.route('/api/qr/combo/<int:id_prova>/<int:id_aluno>', methods=['GET'])
 def gerar_qr_combo(id_prova, id_aluno):
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=2)
@@ -293,7 +295,7 @@ def gerar_qr_combo(id_prova, id_aluno):
     return send_file(buf, mimetype='image/png')
 
 # ==========================================================
-# 🎯 GERADOR DE GABARITOS PERSONALIZADOS (v3 - CARIMBO NA IMAGEM ORIGINAL)
+# 🎯 GERADOR DE GABARITOS PERSONALIZADOS (v3)
 # ==========================================================
 @app.route('/api/gabaritos/turma/<int:id_turma>/prova/<int:id_prova>', methods=['GET'])
 def gerar_gabaritos_turma(id_turma, id_prova):
@@ -307,7 +309,7 @@ def gerar_gabaritos_turma(id_turma, id_prova):
         if not os.path.exists(base_path):
             base_path = os.path.join(base_dir, 'uploads', 'gabarito_base.png')
         if not os.path.exists(base_path):
-            return "<h1>❌ Arquivo gabarito_base.png não encontrado!</h1><p>Coloque a imagem do gabarito limpo com o nome gabarito_base.png na pasta do backend.</p>", 404
+            return "<h1>❌ Arquivo gabarito_base.png não encontrado!</h1>", 404
 
         base = Image.open(base_path).convert('RGB')
 
@@ -405,7 +407,7 @@ def gerar_gabaritos_turma(id_turma, id_prova):
         return f"<h1>❌ Erro: {e}</h1>", 500
 
 # ==========================================================
-# 📥 PÁGINA PARA BAIXAR GABARITOS (sem decorar URL!)
+# 📥 PÁGINA PARA BAIXAR GABARITOS
 # ==========================================================
 @app.route('/baixar_gabaritos', methods=['GET'])
 def pagina_baixar_gabaritos():
@@ -466,24 +468,23 @@ def pagina_baixar_gabaritos():
         return f"<h1>Erro: {e}</h1>", 500
 
 # ==========================================================
-# 🏓 ROTA PING (pro UptimeRobot manter servidor acordado!)
+# 🏓 ROTA PING (UptimeRobot)
 # ==========================================================
 @app.route('/api/ping', methods=['GET'])
 def ping():
-    """Rota leve pro UptimeRobot manter o servidor acordado 24/7."""
     return jsonify({
         "sucesso": True,
         "pong": "servidor acordado!",
         "chaves": len(GEMINI_CHAVES),
-        "modelos": GEMINI_MODELOS
+        "modelos": GEMINI_MODELOS,
+        "pdf_ativo": PDF_OK
     }), 200
 
 # ==========================================================
-# 🤖 CORREÇÃO DISSERTATIVA (v5 — MATRIZ OTIMIZADA: modelo → chave!)
+# 🤖 CORREÇÃO DISSERTATIVA (matriz anti-cota)
 # ==========================================================
 @app.route('/api/teste_gemini', methods=['GET'])
 def teste_gemini():
-    """Teste rápido: verifica a matriz de chaves e modelos."""
     if not GEMINI_CHAVES:
         return jsonify({"sucesso": False, "erro": "Nenhuma chave configurada"}), 500
     
@@ -506,13 +507,10 @@ def teste_gemini():
 
 @app.route('/api/corrigir_dissertativa', methods=['POST'])
 def corrigir_dissertativa():
-    """
-    Matriz anti-cota OTIMIZADA: para cada modelo, tenta todas as chaves.
-    Assim usa as 9 chaves no modelo principal antes de cair pro secundário.
-    """
+    """Matriz anti-cota: para cada modelo, tenta todas as chaves."""
     try:
         if not GEMINI_CHAVES:
-            return jsonify({"sucesso": False, "erro": "Nenhuma chave Gemini configurada no servidor"}), 500
+            return jsonify({"sucesso": False, "erro": "Nenhuma chave Gemini configurada"}), 500
 
         dados = request.get_json() or {}
         prompt = (dados.get('prompt') or '').strip()
@@ -523,7 +521,6 @@ def corrigir_dissertativa():
         if not imagens:
             return jsonify({"sucesso": False, "erro": "Envie 'imagens' (lista)"}), 400
 
-        # Monta as partes: prompt + todas as imagens
         parts = [{"text": prompt}]
         for img in imagens:
             mime = img.get('mime') or 'image/jpeg'
@@ -540,10 +537,8 @@ def corrigir_dissertativa():
             },
         }
 
-        print(f"🤖 [GEMINI v5 OTIMIZADO] {len(imagens)} imagem(ns) | {len(GEMINI_CHAVES)} chave(s) × {len(GEMINI_MODELOS)} modelo(s)")
+        print(f"🤖 [GEMINI v5] {len(imagens)} imagem(ns) | {len(GEMINI_CHAVES)} chave(s) × {len(GEMINI_MODELOS)} modelo(s)")
 
-        # MATRIZ OTIMIZADA: para cada MODELO, tenta todas as CHAVES
-        # Assim usa as 9 chaves no modelo principal antes de cair pro secundário
         ultimo_erro = None
         for modelo in GEMINI_MODELOS:
             for i, chave in enumerate(GEMINI_CHAVES):
@@ -560,11 +555,9 @@ def corrigir_dissertativa():
                     continue
 
                 if resp.status_code != 200:
-                    print(f"❌ [GEMINI] Chave {i+1}/{modelo} erro {resp.status_code}: {resp.text[:200]}")
                     ultimo_erro = f"Chave {i+1}/{modelo}: erro {resp.status_code}"
                     continue
 
-                # SUCESSO!
                 saida = resp.json()
                 texto = saida["candidates"][0]["content"]["parts"][0]["text"]
                 print(f"✅ [GEMINI] Correção concluída com chave {i+1} + modelo {modelo}!")
@@ -575,33 +568,19 @@ def corrigir_dissertativa():
                     "chave_usada": i + 1
                 })
 
-        # Todas falharam
-        print(f"❌ [GEMINI] Toda a matriz falhou. Último: {ultimo_erro}")
         return jsonify({
             "sucesso": False,
-            "erro": f"Todas as {len(GEMINI_CHAVES)} chave(s) × {len(GEMINI_MODELOS)} modelo(s) sem cota. Último erro: {ultimo_erro}"
+            "erro": f"Todas as chaves × modelos sem cota. Último: {ultimo_erro}"
         }), 429
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
-    
-# ==========================================================
-# 📦 CORREÇÃO EM LOTE (Modo Lote - várias provas em paralelo!)
-# ==========================================================
+
 @app.route('/api/corrigir_lote', methods=['POST'])
 def corrigir_lote():
-    """
-    Recebe array de provas e corrige em paralelo (4 threads).
-    Cada prova tem: {
-        "id_aluno": 123,
-        "nome_aluno": "João",
-        "prompt": "texto do prompt",
-        "imagens": [{"mime": "image/jpeg", "data": "base64..."}]
-    }
-    Retorna array com resultados individuais.
-    """
+    """Recebe array de provas e corrige em paralelo (4 threads)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     
     try:
@@ -616,7 +595,6 @@ def corrigir_lote():
         
         print(f"📦 [LOTE] Recebidas {len(provas)} prova(s) para correção em paralelo")
         
-        # Função que corrige UMA prova (vai rodar em thread)
         def corrigir_uma_prova(prova):
             id_aluno = prova.get('id_aluno')
             nome_aluno = prova.get('nome_aluno', 'Sem nome')
@@ -631,7 +609,6 @@ def corrigir_lote():
                     "erro": "Prompt ou imagens faltando"
                 }
             
-            # Monta as partes: prompt + imagens
             parts = [{"text": prompt}]
             for img in imagens:
                 mime = img.get('mime') or 'image/jpeg'
@@ -648,22 +625,17 @@ def corrigir_lote():
                 },
             }
             
-            # MATRIZ ANTI-COTA (igual à rota individual)
             for modelo in GEMINI_MODELOS:
                 for i, chave in enumerate(GEMINI_CHAVES):
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={chave}"
                     try:
                         resp = rq_http.post(url, json=payload, timeout=180)
-                    except Exception as e:
+                    except Exception:
                         continue
                     
-                    if resp.status_code == 429:
+                    if resp.status_code == 429 or resp.status_code != 200:
                         continue
                     
-                    if resp.status_code != 200:
-                        continue
-                    
-                    # SUCESSO!
                     saida = resp.json()
                     texto = saida["candidates"][0]["content"]["parts"][0]["text"]
                     return {
@@ -675,7 +647,6 @@ def corrigir_lote():
                         "chave_usada": i + 1
                     }
             
-            # Todas falharam
             return {
                 "id_aluno": id_aluno,
                 "nome_aluno": nome_aluno,
@@ -683,23 +654,17 @@ def corrigir_lote():
                 "erro": "Todas as chaves/modelos sem cota"
             }
         
-        # Processa em paralelo (4 threads ao mesmo tempo)
         resultados = []
         with ThreadPoolExecutor(max_workers=4) as executor:
-            # Submete todas as provas
             futures = {executor.submit(corrigir_uma_prova, prova): prova for prova in provas}
-            
-            # Coleta resultados conforme ficam prontos
             for future in as_completed(futures):
                 resultado = future.result()
                 resultados.append(resultado)
                 status = "✅" if resultado.get('sucesso') else "❌"
                 print(f"{status} [LOTE] {resultado.get('nome_aluno')}")
         
-        # Ordena resultados pelo id_aluno (pra manter a ordem da turma)
         resultados.sort(key=lambda r: r.get('id_aluno') or 0)
         
-        # Conta sucessos e falhas
         sucessos = sum(1 for r in resultados if r.get('sucesso'))
         falhas = len(resultados) - sucessos
         
@@ -719,14 +684,454 @@ def corrigir_lote():
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 # ==========================================================
+# 💾 NOVA: SALVAR CORREÇÃO DISSERTATIVA DETALHADA (Etapa 1!)
+# ==========================================================
+@app.route('/api/salvar_correcao_detalhada', methods=['POST'])
+def salvar_correcao_detalhada():
+    """
+    Salva os detalhes da correção dissertativa (transcrição, justificativa, notas)
+    na tabela correcoes_dissertativas_detalhadas.
+    """
+    try:
+        dados = request.get_json() or {}
+        id_aluno = dados.get('id_aluno')
+        id_avaliacao = dados.get('id_avaliacao')
+        modelo_usado = dados.get('modelo_usado', '')
+        questoes = dados.get('questoes') or []
+        
+        if not id_aluno or not id_avaliacao:
+            return jsonify({"sucesso": False, "erro": "Envie id_aluno e id_avaliacao"}), 400
+        
+        if not questoes:
+            return jsonify({"sucesso": False, "erro": "Envie 'questoes' (lista)"}), 400
+        
+        # Deleta registros anteriores (pra evitar duplicatas)
+        supabase.table("correcoes_dissertativas_detalhadas").delete() \
+            .eq("id_aluno", id_aluno) \
+            .eq("id_avaliacao", id_avaliacao) \
+            .execute()
+        
+        # Insere os novos registros
+        registros = []
+        for q in questoes:
+            registros.append({
+                "id_aluno": id_aluno,
+                "id_avaliacao": id_avaliacao,
+                "numero_questao": q.get('numero'),
+                "enunciado": q.get('enunciado', ''),
+                "transcricao": q.get('transcricao', ''),
+                "nota_sugerida_ia": q.get('nota_sugerida_ia'),
+                "nota_final": q.get('nota_final'),
+                "valor_questao": q.get('valor_questao'),
+                "justificativa": q.get('justificativa', ''),
+                "revisar": q.get('revisar', False),
+                "modelo_usado": modelo_usado
+            })
+        
+        supabase.table("correcoes_dissertativas_detalhadas").insert(registros).execute()
+        
+        print(f"💾 [DETALHE] {len(registros)} questões salvas (aluno {id_aluno}, prova {id_avaliacao})")
+        
+        return jsonify({
+            "sucesso": True,
+            "mensagem": f"{len(registros)} questões salvas com detalhes!",
+            "total": len(registros)
+        })
+    
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+# ==========================================================
+# 📊 NOVA: SALVAR ESTATÍSTICAS DE PRECISÃO (Etapa 3!)
+# ==========================================================
+@app.route('/api/estatisticas/salvar', methods=['POST'])
+def salvar_estatisticas():
+    """Salva estatísticas de precisão de uma sessão de correção."""
+    try:
+        dados = request.get_json() or {}
+        registro = {
+            "id_avaliacao": dados.get('id_avaliacao'),
+            "total_provas": dados.get('total_provas', 0),
+            "concordancias": dados.get('concordancias', 0),
+            "ajustes_pequenos": dados.get('ajustes_pequenos', 0),
+            "ajustes_grandes": dados.get('ajustes_grandes', 0),
+            "falhas_ia": dados.get('falhas_ia', 0),
+            "tempo_total_minutos": dados.get('tempo_total_minutos', 0)
+        }
+        
+        supabase.table("estatisticas_precisao").insert(registro).execute()
+        
+        return jsonify({
+            "sucesso": True,
+            "mensagem": "Estatísticas salvas!"
+        })
+    except Exception as e:
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+@app.route('/api/estatisticas/<int:id_avaliacao>', methods=['GET'])
+def get_estatisticas(id_avaliacao):
+    """Retorna estatísticas de precisão de uma avaliação."""
+    try:
+        resp = supabase.table("estatisticas_precisao") \
+            .select("*") \
+            .eq("id_avaliacao", id_avaliacao) \
+            .execute()
+        return jsonify({"sucesso": True, "estatisticas": resp.data or []})
+    except Exception as e:
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+# ==========================================================
+# 📄 NOVA: RELATÓRIO PDF DO ALUNO (Etapa 2!)
+# ==========================================================
+@app.route('/api/relatorio/aluno/<int:id_aluno>/<int:id_avaliacao>', methods=['GET'])
+def gerar_relatorio_aluno(id_aluno, id_avaliacao):
+    """Gera PDF com o feedback detalhado da correção de um aluno."""
+    if not PDF_OK:
+        return jsonify({"sucesso": False, "erro": "ReportLab não instalado"}), 500
+    
+    try:
+        # Busca os dados do aluno
+        r_aluno = supabase.table("alunos").select("*").eq("id", id_aluno).maybe_single().execute()
+        if not r_aluno.data:
+            return f"<h1>❌ Aluno {id_aluno} não encontrado!</h1>", 404
+        aluno = r_aluno.data
+        
+        # Busca os dados da avaliação
+        r_av = supabase.table("avaliacoes").select("*").eq("id", id_avaliacao).maybe_single().execute()
+        avaliacao = r_av.data or {"nome": "Avaliação"}
+        
+        # Busca os detalhes da correção
+        r_det = supabase.table("correcoes_dissertativas_detalhadas") \
+            .select("*") \
+            .eq("id_aluno", id_aluno) \
+            .eq("id_avaliacao", id_avaliacao) \
+            .order("numero_questao") \
+            .execute()
+        
+        detalhes = r_det.data or []
+        
+        if not detalhes:
+            return f"<h1>❌ Nenhuma correção salva para {aluno.get('nome_completo', 'Aluno')}!</h1>", 404
+        
+        # Monta o PDF
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buf,
+            pagesize=A4,
+            rightMargin=1.5*cm,
+            leftMargin=1.5*cm,
+            topMargin=1.5*cm,
+            bottomMargin=1.5*cm
+        )
+        
+        styles = getSampleStyleSheet()
+        
+        # Estilos customizados
+        titulo_style = ParagraphStyle(
+            'TituloCustom',
+            parent=styles['Title'],
+            fontSize=20,
+            textColor=HexColor('#4A148C'),
+            spaceAfter=12
+        )
+        
+        cabecalho_style = ParagraphStyle(
+            'CabecalhoCustom',
+            parent=styles['Normal'],
+            fontSize=11,
+            textColor=HexColor('#333333'),
+            spaceAfter=6
+        )
+        
+        questao_style = ParagraphStyle(
+            'QuestaoCustom',
+            parent=styles['Heading3'],
+            fontSize=13,
+            textColor=HexColor('#FF6F00'),
+            spaceBefore=12,
+            spaceAfter=6
+        )
+        
+        corpo_style = ParagraphStyle(
+            'CorpoCustom',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor=black,
+            spaceAfter=4,
+            leading=14
+        )
+        
+        transcri_style = ParagraphStyle(
+            'TranscriCustom',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor=HexColor('#1A237E'),
+            fontStyle='italic',
+            spaceAfter=4,
+            leading=13
+        )
+        
+        justif_style = ParagraphStyle(
+            'JustifCustom',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor=HexColor('#555555'),
+            spaceAfter=8,
+            leading=13
+        )
+        
+        elementos = []
+        
+        # CABEÇALHO
+        elementos.append(Paragraph("📝 RELATÓRIO DE CORREÇÃO DISSERTATIVA", titulo_style))
+        elementos.append(Paragraph(
+            f"<b>Aluno(a):</b> {aluno.get('nome_completo', 'Sem nome')}",
+            cabecalho_style
+        ))
+        elementos.append(Paragraph(
+            f"<b>Avaliação:</b> {avaliacao.get('nome', 'Avaliação')}",
+            cabecalho_style
+        ))
+        data_av = avaliacao.get('data_prova', '')
+        if data_av:
+            elementos.append(Paragraph(f"<b>Data da prova:</b> {data_av}", cabecalho_style))
+        elementos.append(Paragraph(
+            f"<b>Gerado em:</b> {datetime.now().strftime('%d/%m/%Y às %H:%M')}",
+            cabecalho_style
+        ))
+        elementos.append(Spacer(1, 12))
+        
+        # RESUMO DA NOTA
+        soma_final = sum(float(d.get('nota_final') or 0) for d in detalhes)
+        soma_valor = sum(float(d.get('valor_questao') or 0) for d in detalhes)
+        nota_10 = (soma_final * 10 / soma_valor) if soma_valor > 0 else 0
+        
+        resumo_data = [
+            ['📊 RESUMO DA CORREÇÃO', ''],
+            ['Total de questões:', str(len(detalhes))],
+            ['Nota obtida:', f'{soma_final:.1f} de {soma_valor:.1f}'],
+            ['Nota (escala 0-10):', f'{nota_10:.1f}'],
+            ['Modelo de IA utilizado:', detalhes[0].get('modelo_usado', '-')],
+        ]
+        
+        tabela_resumo = Table(resumo_data, colWidths=[8*cm, 8*cm])
+        tabela_resumo.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#4A148C')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), HexColor('#F3E5F5')),
+            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#9C27B0')),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 10),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        elementos.append(tabela_resumo)
+        elementos.append(Spacer(1, 20))
+        
+        # DETALHES POR QUESTÃO
+        elementos.append(Paragraph("📋 DETALHES POR QUESTÃO", titulo_style))
+        
+        for det in detalhes:
+            num = det.get('numero_questao', '?')
+            nota_s = det.get('nota_sugerida_ia', 0)
+            nota_f = det.get('nota_final', 0)
+            valor = det.get('valor_questao', 0)
+            revisar = det.get('revisar', False)
+            
+            badge = " ⚠️ (professor ajustou)" if (nota_s != nota_f) else ""
+            
+            elementos.append(Paragraph(
+                f"Questão {num} — Nota: {nota_f}/{valor}{badge}",
+                questao_style
+            ))
+            
+            enunciado = det.get('enunciado', '')
+            if enunciado:
+                elementos.append(Paragraph(f"<b>Enunciado:</b> {enunciado}", corpo_style))
+            
+            transcri = det.get('transcricao', '')
+            if transcri:
+                elementos.append(Paragraph(
+                    f"<b>✍️ O que o aluno escreveu:</b><br/><i>\"{transcri}\"</i>",
+                    transcri_style
+                ))
+            
+            justif = det.get('justificativa', '')
+            if justif:
+                elementos.append(Paragraph(
+                    f"<b>💡 Avaliação:</b> {justif}",
+                    justif_style
+                ))
+            
+            if revisar:
+                elementos.append(Paragraph(
+                    "<b>⚠️ Observação:</b> Raciocínio diferente — professor revisou.",
+                    corpo_style
+                ))
+            
+            elementos.append(Spacer(1, 8))
+        
+        # RODAPÉ
+        elementos.append(Spacer(1, 20))
+        elementos.append(Paragraph(
+            "<i>Este relatório foi gerado automaticamente pelo OMR Sistema 2.0 com apoio de Inteligência Artificial (Gemini) e revisão do professor.</i>",
+            ParagraphStyle('Rodape', parent=styles['Normal'], fontSize=9, textColor=HexColor('#777777'), alignment=TA_CENTER)
+        ))
+        
+        doc.build(elementos)
+        buf.seek(0)
+        
+        nome_aluno_seguro = ''.join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in aluno.get('nome_completo', 'aluno'))
+        
+        return send_file(
+            buf,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f'relatorio_{nome_aluno_seguro}_prova{id_avaliacao}.pdf'
+        )
+    
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"<h1>❌ Erro ao gerar relatório: {e}</h1>", 500
+
+# ==========================================================
+# 📄 NOVA: RELATÓRIO PDF DA TURMA (resumo de todos os alunos)
+# ==========================================================
+@app.route('/api/relatorio/turma/<int:id_turma>/<int:id_avaliacao>', methods=['GET'])
+def gerar_relatorio_turma(id_turma, id_avaliacao):
+    """Gera PDF com resumo das notas de todos os alunos da turma."""
+    if not PDF_OK:
+        return jsonify({"sucesso": False, "erro": "ReportLab não instalado"}), 500
+    
+    try:
+        r_turma = supabase.table("turmas").select("*").eq("id", id_turma).maybe_single().execute()
+        if not r_turma.data:
+            return f"<h1>❌ Turma {id_turma} não encontrada!</h1>", 404
+        turma = r_turma.data
+        
+        r_av = supabase.table("avaliacoes").select("*").eq("id", id_avaliacao).maybe_single().execute()
+        avaliacao = r_av.data or {"nome": "Avaliação"}
+        
+        r_alunos = supabase.table("alunos").select("*").eq("id_turma", id_turma).order("numero_chamada").execute()
+        alunos = r_alunos.data or []
+        
+        r_res = supabase.table("resultados").select("*").eq("id_avaliacao", id_avaliacao).execute()
+        resultados = {r['id_aluno']: r for r in (r_res.data or [])}
+        
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=1.5*cm, leftMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
+        
+        styles = getSampleStyleSheet()
+        titulo_style = ParagraphStyle(
+            'TituloCustom', parent=styles['Title'],
+            fontSize=18, textColor=HexColor('#4A148C'), spaceAfter=12
+        )
+        
+        elementos = []
+        elementos.append(Paragraph("📊 RELATÓRIO DE DESEMPENHO DA TURMA", titulo_style))
+        elementos.append(Paragraph(
+            f"<b>Turma:</b> {turma.get('nome')} | <b>Avaliação:</b> {avaliacao.get('nome')}",
+            styles['Normal']
+        ))
+        elementos.append(Paragraph(
+            f"<b>Gerado em:</b> {datetime.now().strftime('%d/%m/%Y às %H:%M')}",
+            styles['Normal']
+        ))
+        elementos.append(Spacer(1, 16))
+        
+        # Tabela de alunos
+        dados_tabela = [['Nº', 'Aluno', 'Nota', 'Nível']]
+        
+        for aluno in alunos:
+            res = resultados.get(aluno['id'])
+            nota = res.get('nota_bruta', '-') if res else '-'
+            nivel = res.get('nivel_saeb', '-') if res else '-'
+            
+            if isinstance(nota, (int, float)):
+                nota = f'{nota:.1f}'
+            
+            dados_tabela.append([
+                str(aluno.get('numero_chamada', '-')),
+                aluno.get('nome_completo', 'Sem nome'),
+                str(nota),
+                str(nivel)
+            ])
+        
+        tabela = Table(dados_tabela, colWidths=[1.5*cm, 10*cm, 2.5*cm, 4*cm])
+        tabela.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#4A148C')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+            ('ALIGN', (2, 0), (3, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#9C27B0')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F3E5F5')]),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        elementos.append(tabela)
+        
+        # Estatísticas da turma
+        notas = [r.get('nota_bruta', 0) for r in resultados.values() if r.get('nota_bruta') is not None]
+        if notas:
+            media = sum(notas) / len(notas)
+            maior = max(notas)
+            menor = min(notas)
+            
+            elementos.append(Spacer(1, 16))
+            elementos.append(Paragraph("📈 ESTATÍSTICAS DA TURMA", titulo_style))
+            
+            stats_data = [
+                ['Alunos corrigidos:', str(len(notas))],
+                ['Média da turma:', f'{media:.1f}'],
+                ['Maior nota:', f'{maior:.1f}'],
+                ['Menor nota:', f'{menor:.1f}'],
+            ]
+            
+            tabela_stats = Table(stats_data, colWidths=[6*cm, 4*cm])
+            tabela_stats.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), HexColor('#FFF3E0')),
+                ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#FF6F00')),
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('LEFTPADDING', (0, 0), (-1, -1), 10),
+            ]))
+            elementos.append(tabela_stats)
+        
+        doc.build(elementos)
+        buf.seek(0)
+        
+        nome_turma_seguro = ''.join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in turma.get('nome', 'turma'))
+        
+        return send_file(
+            buf,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f'relatorio_turma_{nome_turma_seguro}_prova{id_avaliacao}.pdf'
+        )
+    
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"<h1>❌ Erro ao gerar relatório: {e}</h1>", 500
+
+# ==========================================================
 # 🏁 INICIALIZAÇÃO DO SERVIDOR
 # ==========================================================
 if __name__ == '__main__':
-    print("🚨🚨🚨 OMR SISTEMA 2.0 - MATRIZ ANTI-COTA OTIMIZADA 🚨🚨🚨")
+    print("🚨🚨🚨 OMR SISTEMA 2.0 - BACKEND COMPLETO 🚨🚨🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
     print(f"🔑 Gemini chaves: {len(GEMINI_CHAVES)} configurada(s)")
     print(f"🤖 Gemini modelos: {GEMINI_MODELOS}")
+    print(f"📄 Relatórios PDF: {'✅ ATIVOS' if PDF_OK else '❌ INATIVOS (instalar reportlab)'}")
     port = int(os.environ.get("PORT", 10000))
-    print(f"📡 Servidor rodando na porta: {port} (host: 0.0.0.0)")
-    print(f"   Acessível em: http://0.0.0.0:{port}")
+    print(f"📡 Servidor rodando na porta: {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
