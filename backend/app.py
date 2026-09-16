@@ -988,12 +988,19 @@ def gerar_relatorio_aluno(id_aluno, id_avaliacao):
         
         nome_aluno_seguro = ''.join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in aluno.get('nome_completo', 'aluno'))
         
-        return send_file(
+        timestamp = datetime.now().strftime('%d%m_%H%M')
+        nome_arquivo = f'relatorio_{nome_aluno_seguro}_prova{id_avaliacao}_{timestamp}.pdf'
+        
+        resposta = send_file(
             buf,
             mimetype='application/pdf',
             as_attachment=True,
-            download_name=f'relatorio_{nome_aluno_seguro}_prova{id_avaliacao}.pdf'
+            download_name=nome_arquivo
         )
+        resposta.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        resposta.headers['Pragma'] = 'no-cache'
+        resposta.headers['Expires'] = '0'
+        return resposta
     
     except Exception as e:
         import traceback
@@ -1277,12 +1284,19 @@ def gerar_relatorio_turma(id_turma, id_avaliacao):
             for c in turma.get('nome', 'turma')
         )
         
-        return send_file(
+        timestamp = datetime.now().strftime('%d%m_%H%M')
+        nome_arquivo = f'relatorio_turma_{nome_turma_seguro}_prova{id_avaliacao}_{timestamp}.pdf'
+        
+        resposta = send_file(
             buf,
             mimetype='application/pdf',
             as_attachment=True,
-            download_name=f'relatorio_turma_{nome_turma_seguro}_prova{id_avaliacao}.pdf'
+            download_name=nome_arquivo
         )
+        resposta.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        resposta.headers['Pragma'] = 'no-cache'
+        resposta.headers['Expires'] = '0'
+        return resposta
     
     except Exception as e:
         import traceback
