@@ -1417,6 +1417,178 @@ def gerar_relatorio_turma(id_turma, id_avaliacao):
         return f"<h1>❌ Erro ao gerar relatório: {e}</h1>", 500
 
 # ==========================================================
+# 🧠 SITUAÇÃO 1: GERAR QUESTÕES E IDENTIFICAR HABILIDADES
+# ==========================================================
+def _gemini_chamar(payload):
+    """Chama o Gemini com a matriz anti-cota. Retorna (texto, modelo, chave) ou (None, erro)."""
+    ultimo_erro = None
+    for modelo in GEMINI_MODELOS:
+        for i, chave in enumerate(GEMINI_CHAVES):
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={chave}"
+            try:
+                resp = rq_http.post(url, json=payload, timeout=180)
+            except Exception as e:
+                ultimo_erro = f"Chave {i+1}/{modelo}: rede ({e})"
+                continue
+            if resp.status_code == 429:
+                ultimo_erro = f"Chave {i+1}/{modelo}: 429"
+                continue
+            if resp.status_code != 200:
+                ultimo_erro = f"Chave {i+1}/{modelo}: {resp.status_code}"
+                continue
+            saida = resp.json()
+            texto = saida["candidates"][0]["content"]["parts"][0]["text"]
+            return texto, modelo, i + 1
+    return None, ultimo_erro
+
+
+def _extrair_json_array(texto):
+    """Extrai um array JSON mesmo se a IA vier com texto extra."""
+    t = (texto or '').strip()
+    i = t.find('[')
+    f = t.rfind(']')
+    if i == -1 or f == -1 or f <= i:
+        return []
+    try:
+        arr = jsonlib.loads(t[i:f + 1])
+        return arr if isinstance(arr, list) else []
+    except Exception:
+        return []
+
+
+@app.route('/api/matriz', methods=['GET'])
+def listar_matriz():
+    """Lista habilidades/descritores pra preencher os menus do app."""
+    fonte = request.args.get('fonte', 'CP')
+    componente = request.args.get('componente', 'Matemática')
+    ano = request.args.get('ano', type=int)
+    try:
+        q = supabase.table("matriz_curricular").select("*") \
+            .eq("fonte", fonte).eq("componente", componente)
+        if ano:
+            q = q.eq("ano", ano)
+        resp = q.order("codigo").execute()
+        return jsonify({"sucesso": True, "itens": resp.data or []})
+    except Exception as e:
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+
+@app.route('/api/gerar_questoes', methods=['POST'])
+def gerar_questoes():
+    """✨ IA cria questões dissertativas alinhadas à habilidade/descritor escolhido."""
+    try:
+        dados = request.get_json() or {}
+        codigos = dados.get('codigos') or []
+        fonte = dados.get('fonte', 'CP')
+        componente = dados.get('componente', 'Matemática')
+        ano = dados.get('ano', 6)
+        quantidade = max(1, min(5, int(dados.get('quantidade', 1))))
+        dificuldade = dados.get('dificuldade', 'média')
+        contexto = (dados.get('contexto') or '').strip()
+        valor_padrao = float(dados.get('valor_padrao', 2.0))
+
+        if not codigos:
+            return jsonify({"sucesso": False, "erro": "Escolha ao menos uma habilidade/descritor"}), 400
+
+        # Busca as descrições oficiais na matriz
+        resp = supabase.table("matriz_curricular").select("*") \
+            .in_("codigo", codigos).eq("fonte", fonte).execute()
+        itens = resp.data or []
+        if not itens:
+            return jsonify({"sucesso": False, "erro": "Códigos não encontrados na matriz"}), 404
+
+        lista = "\n".join(f"- {it['codigo']} ({it['tema']}): {it['descricao']}" for it in itens)
+
+        ctx = f"\nContexto pedido pelo professor: {contexto}" if contexto else ""
+        prompt = (
+            f"Você é um professor especialista em {componente} do {ano}º ano do Ensino Fundamental, "
+            f"alinhado ao Currículo Paulista e às matrizes de referência do SAEB.\n"
+            f"Crie {quantidade} questão(ões) dissertativa(s) INÉDITA(s) e contextualizadas para CADA habilidade/descritor da lista abaixo.\n"
+            f"Dificuldade: {dificuldade}.{ctx}\n"
+            f"Regras obrigatórias:\n"
+            f"- Enunciado claro, com todos os dados necessários e uma demanda principal única.\n"
+            f"- Linguagem adequada a estudantes do {ano}º ano.\n"
+            f"- Resposta esperada completa, mostrando o raciocínio/cálculos.\n"
+            f"- Critérios de correção explicando o que vale nota parcial.\n"
+            f"HABILIDADES/DESCRITORES:\n{lista}\n\n"
+            f"Responda SOMENTE um array JSON válido no formato:\n"
+            f'[{{"codigo":"...","enunciado":"...","resposta_esperada":"...","criterios":"...","valor":{valor_padrao}}}]'
+        )
+
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.8, "responseMimeType": "application/json"},
+        }
+        texto, modelo, chave = _gemini_chamar(payload)
+        if texto is None:
+            return jsonify({"sucesso": False, "erro": f"Sem cota em todas as chaves: {chave}"}), 429
+
+        questoes = _extrair_json_array(texto)
+        if not questoes:
+            return jsonify({"sucesso": False, "erro": "A IA não retornou questões válidas"}), 502
+
+        print(f"✨ [GERAR] {len(questoes)} questão(ões) criadas com {modelo} (chave {chave})")
+        return jsonify({
+            "sucesso": True,
+            "questoes": questoes,
+            "modelo": modelo,
+            "chave_usada": chave,
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+
+@app.route('/api/identificar_habilidade', methods=['POST'])
+def identificar_habilidade():
+    """🔍 IA diz qual habilidade/descritor uma questão existente avalia."""
+    try:
+        dados = request.get_json() or {}
+        texto = (dados.get('texto') or '').strip()
+        fonte = dados.get('fonte', 'CP')
+        componente = dados.get('componente', 'Matemática')
+        ano = dados.get('ano', 6)
+
+        if not texto:
+            return jsonify({"sucesso": False, "erro": "Cole o texto da questão"}), 400
+
+        resp = supabase.table("matriz_curricular").select("*") \
+            .eq("fonte", fonte).eq("componente", componente).eq("ano", ano) \
+            .order("codigo").execute()
+        itens = resp.data or []
+        if not itens:
+            return jsonify({"sucesso": False, "erro": "Matriz vazia para essa fonte/ano"}), 404
+
+        lista = "\n".join(f"{it['codigo']}) {it['descricao']}" for it in itens)
+        prompt = (
+            f"Você é um especialista em avaliação educacional ({componente}, {ano}º ano, matriz {fonte}).\n"
+            f"Leia a QUESTÃO do professor e indique os até 3 códigos da matriz que MELHOR correspondem ao que ela exige, "
+            f"do mais aderente para o menos aderente.\n"
+            f"MATRIZ:\n{lista}\n\nQUESTÃO:\n{texto}\n\n"
+            f'Responda SOMENTE um array JSON válido no formato:\n'
+            f'[{{"codigo":"...","aderencia":95,"justificativa":"..."}}]'
+        )
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
+        }
+        texto_resp, modelo, chave = _gemini_chamar(payload)
+        if texto_resp is None:
+            return jsonify({"sucesso": False, "erro": f"Sem cota em todas as chaves: {chave}"}), 429
+
+        resultados = _extrair_json_array(texto_resp)
+        if not resultados:
+            return jsonify({"sucesso": False, "erro": "A IA não retornou análise válida"}), 502
+
+        print(f"🔍 [IDENTIFICAR] análise concluída com {modelo} (chave {chave})")
+        return jsonify({"sucesso": True, "resultados": resultados, "modelo": modelo})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+# ==========================================================
 # 🏁 INICIALIZAÇÃO DO SERVIDOR
 # ==========================================================
 if __name__ == '__main__':
