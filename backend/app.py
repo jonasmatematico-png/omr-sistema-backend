@@ -1600,3 +1600,65 @@ if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
     print(f"📡 Servidor rodando na porta: {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
+
+# ==========================================================
+# 🚀 NOVO: GERADOR DE PLANO DE RECUPERAÇÃO DIRIGIDA
+# ==========================================================
+@app.route('/api/gerar_plano_recuperacao', methods=['POST'])
+def gerar_plano_recuperacao():
+    """Recebe as habilidades/descritores com baixo desempenho e pede à IA um plano de recuperação."""
+    try:
+        dados = request.get_json() or {}
+        itens_ruins = dados.get('itens_ruins', []) # Lista de códigos (ex: ['D25', 'D12'] ou ['EF06MA01'])
+        tipo_analise = dados.get('tipo_analise', 'Descritor') # 'Descritor' ou 'Habilidade'
+        ano = dados.get('ano', 6)
+        componente = dados.get('componente', 'Matemática')
+
+        if not itens_ruins:
+            return jsonify({"sucesso": False, "erro": "Nenhum item com baixo desempenho informado."}), 400
+
+        # Monta o prompt para o Gemini
+        lista_formatada = ", ".join(itens_ruins)
+        
+        prompt = (
+            f"Você é um especialista pedagógico em {componente} para o {ano}º ano do Ensino Fundamental.\n"
+            f"O professor aplicou uma prova e identificou que a turma teve desempenho CRÍTICO (menos de 50% de acerto) "
+            f"nos seguintes {tipo_analise}s: {lista_formatada}.\n\n"
+            f"Sua missão é criar um **PLANO DE RECUPERAÇÃO DIRIGIDA** prático e eficaz.\n\n"
+            f"Responda SOMENTE em formato JSON válido com a seguinte estrutura:\n"
+            f'{{"plano": "Um parágrafo curto explicando o foco da recuperação", '
+            f'"atividades": [{{"titulo": "Nome da atividade", "descricao": "Como o professor deve aplicar", "exemplo_pratico": "Um exemplo de exercício ou contexto do dia a dia"}}]}}'
+        )
+
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.7, "responseMimeType": "application/json"},
+        }
+
+        texto, modelo, chave = _gemini_chamar(payload)
+        
+        if texto is None:
+            return jsonify({"sucesso": False, "erro": f"Sem cota em todas as chaves: {chave}"}), 429
+
+        # Tenta extrair o JSON da resposta da IA
+        import json as jsonlib
+        try:
+            # A IA às vezes coloca ```json ... ```, vamos limpar
+            texto_limpo = texto.replace("```json", "").replace("```", "").strip()
+            resposta_ia = jsonlib.loads(texto_limpo)
+        except Exception:
+            # Se falhar o JSON, retorna o texto puro
+            resposta_ia = {"plano": "Recuperação focada nos itens: " + lista_formatada, "atividades": [{"titulo": "Atividade Gerada", "descricao": texto, "exemplo_pratico": "-"}]}
+
+        print(f"🚀 [RECUPERAÇÃO] Plano gerado para {itens_ruins} com {modelo}")
+        
+        return jsonify({
+            "sucesso": True,
+            "plano": resposta_ia,
+            "modelo": modelo
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
