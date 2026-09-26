@@ -1637,6 +1637,64 @@ def gerar_plano_aula():
         import traceback; traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
+        # ==========================================================
+# 🚀 NOVO: PLANEJADOR DE AULA PASSO A PASSO COM IA
+# ==========================================================
+@app.route('/api/gerar_plano_aula', methods=['POST'])
+def gerar_plano_aula():
+    try:
+        dados = request.get_json() or {}
+        tema = dados.get('tema', '')
+        material = dados.get('material', '')
+        perfil_turma = dados.get('perfil_turma', '')
+        duracao = dados.get('duracao', '50 minutos')
+
+        if not tema:
+            return jsonify({"sucesso": False, "erro": "O tema da aula é obrigatório."}), 400
+
+        prompt = (
+            f"Você é um coordenador pedagógico especialista. Crie um Plano de Aula detalhado e prático.\n\n"
+            f"TEMA DA AULA: {tema}\n"
+            f"MATERIAL DIDÁTICO DISPONÍVEL: {material}\n"
+            f"PERFIL DA TURMA (Dados do Diagnóstico): {perfil_turma}\n"
+            f"DURAÇÃO DA AULA: {duracao}\n\n"
+            f"Responda APENAS em formato JSON válido com esta estrutura exata:\n"
+            f'{{"objetivos": ["objetivo 1", "objetivo 2"], '
+            f'"passo_a_passo": [{{"tempo": "10 min", "etapa": "Introdução", "acao": "O que o professor deve fazer nesta etapa"}}], '
+            f'"avaliacao": "Como avaliar a aprendizagem nesta aula", '
+            f'"tarefa_casa": "Sugestão de tarefa de casa"}}'
+        )
+
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.7, "responseMimeType": "application/json"},
+        }
+
+        texto, modelo, chave = _gemini_chamar(payload)
+        
+        if texto is None:
+            return jsonify({"sucesso": False, "erro": f"Sem cota em todas as chaves: {chave}"}), 429
+
+        import json as jsonlib
+        try:
+            texto_limpo = texto.replace("```json", "").replace("```", "").strip()
+            resposta_ia = jsonlib.loads(texto_limpo)
+        except Exception:
+            resposta_ia = {"objetivos": [texto], "passo_a_passo": [], "avaliacao": "-", "tarefa_casa": "-"}
+
+        print(f"🚀 [PLANO DE AULA] Gerado para o tema: {tema} com {modelo}")
+        
+        return jsonify({
+            "sucesso": True,
+            "plano": resposta_ia,
+            "modelo": modelo
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
 # ==========================================================
 # 🏁 INICIALIZAÇÃO DO SERVIDOR
 # ==========================================================
