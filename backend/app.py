@@ -1457,19 +1457,42 @@ def _extrair_json_array(texto):
 
 
 @app.route('/api/matriz', methods=['GET'])
-def listar_matriz():
-    """Lista habilidades/descritores pra preencher os menus do app."""
-    fonte = request.args.get('fonte', 'CP')
-    componente = request.args.get('componente', 'Matemática')
-    ano = request.args.get('ano', type=int)
+def buscar_matriz():
     try:
-        q = supabase.table("matriz_curricular").select("*") \
-            .eq("fonte", fonte).eq("componente", componente)
-        if ano:
-            q = q.eq("ano", ano)
-        resp = q.order("codigo").execute()
-        return jsonify({"sucesso": True, "itens": resp.data or []})
+        # 1. Pegar os parâmetros que o site enviou
+        fonte_param = request.args.get('fonte', 'CP')
+        ano_param = request.args.get('ano')
+        disciplina_param = request.args.get('disciplina')
+
+        # 2. Iniciar a consulta na tabela CORRETA (matriz_curricular)
+        query = supabase.table("matriz_curricular").select("codigo, habilidade, tema, objetos_de_conhecimento")
+
+        # 3. Filtrar pela fonte
+        if fonte_param == 'CP':
+            query = query.eq('fonte', 'Currículo Paulista')
+        else:
+            query = query.eq('fonte', fonte_param)
+
+        # 4. Filtrar pelo ano (ex: '6')
+        if ano_param:
+            query = query.eq('ano', ano_param)
+
+        # 5. Filtrar pela matéria (ATENÇÃO: no seu banco a coluna se chama 'componente')
+        if disciplina_param:
+            query = query.eq('componente', disciplina_param)
+
+        # 6. Executar a consulta
+        response = query.execute()
+
+        # 7. Retornar os dados para o site
+        if response.data:
+            return jsonify({"sucesso": True, "itens": response.data})
+        else:
+            return jsonify({"sucesso": False, "erro": "Nenhuma habilidade encontrada com esses filtros."})
+            
     except Exception as e:
+        # Se der erro, ele avisa exatamente qual foi o problema
+        print(f"ERRO NO BACKEND: {e}")
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 
@@ -1497,7 +1520,7 @@ def gerar_questoes():
         if not itens:
             return jsonify({"sucesso": False, "erro": "Códigos não encontrados na matriz"}), 404
 
-        lista = "\n".join(f"- {it['codigo']} ({it['tema']}): {it['descricao']}" for it in itens)
+        lista = "\n".join(f"- {it['codigo']} ({it['tema']}): {it['habilidade']}" for it in itens)
 
         ctx = f"\nContexto pedido pelo professor: {contexto}" if contexto else ""
         prompt = (
@@ -1560,7 +1583,8 @@ def identificar_habilidade():
         if not itens:
             return jsonify({"sucesso": False, "erro": "Matriz vazia para essa fonte/ano"}), 404
 
-        lista = "\n".join(f"{it['codigo']}) {it['descricao']}" for it in itens)
+        lista = "\n".join(f"{it['codigo']}) {it['habilidade']}" for it in itens)
+
         prompt = (
             f"Você é um especialista em avaliação educacional ({componente}, {ano}º ano, matriz {fonte}).\n"
             f"Leia a QUESTÃO do professor e indique os até 3 códigos da matriz que MELHOR correspondem ao que ela exige, "
@@ -1586,55 +1610,6 @@ def identificar_habilidade():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"sucesso": False, "erro": str(e)}), 500
-
-        # ==========================================================
-#  NOVO: PLANEJADOR DE AULA PASSO A PASSO
-# ==========================================================
-@app.route('/api/gerar_plano_aula', methods=['POST'])
-def gerar_plano_aula():
-    try:
-        dados = request.get_json() or {}
-        tema = dados.get('tema', '')
-        material = dados.get('material', '')
-        perfil_turma = dados.get('perfil_turma', '')
-        duracao = dados.get('duracao', '50 minutos')
-
-        if not tema:
-            return jsonify({"sucesso": False, "erro": "O tema da aula é obrigatório."}), 400
-
-        prompt = (
-            f"Você é um coordenador pedagógico especialista. Crie um Plano de Aula detalhado, passo a passo.\n\n"
-            f"TEMA: {tema}\n"
-            f"MATERIAL DIDÁTICO UTILIZADO: {material}\n"
-            f"PERFIL DA TURMA (Dados do Diagnóstico): {perfil_turma}\n"
-            f"DURAÇÃO: {duracao}\n\n"
-            f"Responda APENAS em formato JSON válido com esta estrutura exata:\n"
-            f'{{"objetivos": ["obj1", "obj2"], '
-            f'"passo_a_passo": [{{"tempo": "10 min", "etapa": "Introdução", "acao": "O que o professor faz"}}], '
-            f'"avaliacao": "Como avaliar a aprendizagem", '
-            f'"tarefa_casa": "Sugestão de tarefa"}}'
-        )
-
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.7, "responseMimeType": "application/json"},
-        }
-
-        texto, modelo, chave = _gemini_chamar(payload)
-        if texto is None:
-            return jsonify({"sucesso": False, "erro": f"Sem cota: {chave}"}), 429
-
-        import json as jsonlib
-        try:
-            texto_limpo = texto.replace("```json", "").replace("```", "").strip()
-            resposta_ia = jsonlib.loads(texto_limpo)
-        except Exception:
-            resposta_ia = {"objetivos": [texto], "passo_a_passo": [], "avaliacao": "-", "tarefa_casa": "-"}
-
-        return jsonify({"sucesso": True, "plano": resposta_ia, "modelo": modelo})
-    except Exception as e:
-        import traceback; traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
         # ==========================================================
