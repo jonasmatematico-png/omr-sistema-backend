@@ -1498,7 +1498,7 @@ def buscar_matriz():
 
 @app.route('/api/gerar_questoes', methods=['POST'])
 def gerar_questoes():
-    """✨ IA cria questões dissertativas alinhadas à habilidade/descritor escolhido."""
+    """✨ IA cria questões (dissertativas ou objetivas) alinhadas à habilidade/descritor escolhido."""
     try:
         dados = request.get_json() or {}
         codigos = dados.get('codigos') or []
@@ -1510,6 +1510,10 @@ def gerar_questoes():
         dificuldade = dados.get('dificuldade', 'média')
         contexto = (dados.get('contexto') or '').strip()
         valor_padrao = float(dados.get('valor_padrao', 2.0))
+        
+        # Novos parâmetros para múltipla escolha
+        tipo_questao = dados.get('tipo', 'aberta') # 'aberta' ou 'objetiva'
+        num_alternativas = int(dados.get('num_alternativas', 4)) # 3, 4 ou 5
 
         if not codigos:
             return jsonify({"sucesso": False, "erro": "Escolha ao menos uma habilidade/descritor"}), 400
@@ -1522,22 +1526,41 @@ def gerar_questoes():
             return jsonify({"sucesso": False, "erro": "Códigos não encontrados na matriz"}), 404
 
         lista = "\n".join(f"- {it['codigo']} ({it['tema']}): {it['habilidade']}" for it in itens)
-
         ctx = f"\nContexto pedido pelo professor: {contexto}" if contexto else ""
-        prompt = (
-            f"Você é um professor especialista em {componente} do {ano}º ano do Ensino Fundamental, "
-            f"alinhado ao Currículo Paulista e às matrizes de referência do SAEB.\n"
-            f"Crie {quantidade} questão(ões) dissertativa(s) INÉDITA(s) e contextualizadas para CADA habilidade/descritor da lista abaixo.\n"
-            f"Dificuldade: {dificuldade}.{ctx}\n"
-            f"Regras obrigatórias:\n"
-            f"- Enunciado claro, com todos os dados necessários e uma demanda principal única.\n"
-            f"- Linguagem adequada a estudantes do {ano}º ano.\n"
-            f"- Resposta esperada completa, mostrando o raciocínio/cálculos.\n"
-            f"- Critérios de correção explicando o que vale nota parcial.\n"
-            f"HABILIDADES/DESCRITORES:\n{lista}\n\n"
-            f"Responda SOMENTE um array JSON válido no formato:\n"
-            f'[{{"codigo":"...","enunciado":"...","resposta_esperada":"...","criterios":"...","valor":{valor_padrao}}}]'
-        )
+
+        # LÓGICA DO PROMPT (A MÁGICA ACONTECE AQUI!)
+        if tipo_questao == 'objetiva':
+            letras = ", ".join([chr(65+i) for i in range(num_alternativas)]) # Gera A, B, C, D...
+            prompt = (
+                f"Você é um professor especialista em {componente} do {ano}º ano do Ensino Fundamental, "
+                f"alinhado ao Currículo Paulista e às matrizes de referência do SAEB.\n"
+                f"Crie {quantidade} questão(ões) de MÚLTIPLA ESCOLHA INÉDITA(s) e contextualizadas para CADA habilidade/descritor da lista abaixo.\n"
+                f"Dificuldade: {dificuldade}.{ctx}\n"
+                f"Regras obrigatórias:\n"
+                f"- Enunciado claro, com todos os dados necessários e uma demanda principal única.\n"
+                f"- Linguagem adequada a estudantes do {ano}º ano.\n"
+                f"- Exatamente {num_alternativas} alternativas ({letras}), sendo apenas UMA correta.\n"
+                f"- As alternativas incorretas devem ser plausíveis (distratores).\n"
+                f"HABILIDADES/DESCRITORES:\n{lista}\n\n"
+                f"Responda SOMENTE um array JSON válido no formato:\n"
+                f'[{{"codigo":"...","enunciado":"...","alternativas":{{"A":"texto da A","B":"texto da B","C":"texto da C","D":"texto da D"}},"gabarito":"A","valor":{valor_padrao}}}]'
+            )
+        else:
+            # Prompt original para questões abertas (dissertativas)
+            prompt = (
+                f"Você é um professor especialista em {componente} do {ano}º ano do Ensino Fundamental, "
+                f"alinhado ao Currículo Paulista e às matrizes de referência do SAEB.\n"
+                f"Crie {quantidade} questão(ões) dissertativa(s) INÉDITA(s) e contextualizadas para CADA habilidade/descritor da lista abaixo.\n"
+                f"Dificuldade: {dificuldade}.{ctx}\n"
+                f"Regras obrigatórias:\n"
+                f"- Enunciado claro, com todos os dados necessários e uma demanda principal única.\n"
+                f"- Linguagem adequada a estudantes do {ano}º ano.\n"
+                f"- Resposta esperada completa, mostrando o raciocínio/cálculos.\n"
+                f"- Critérios de correção explicando o que vale nota parcial.\n"
+                f"HABILIDADES/DESCRITORES:\n{lista}\n\n"
+                f"Responda SOMENTE um array JSON válido no formato:\n"
+                f'[{{"codigo":"...","enunciado":"...","resposta_esperada":"...","criterios":"...","valor":{valor_padrao}}}]'
+            )
 
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
