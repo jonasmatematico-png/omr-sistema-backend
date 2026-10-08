@@ -1503,6 +1503,7 @@ def gerar_questoes():
         dados = request.get_json() or {}
         codigos = dados.get('codigos') or []
         fonte = dados.get('fonte', 'CP')
+        fonte_db = 'Currículo Paulista' if fonte == 'CP' else fonte
         componente = dados.get('componente', 'Matemática')
         ano = dados.get('ano', 6)
         quantidade = max(1, min(5, int(dados.get('quantidade', 1))))
@@ -1515,7 +1516,7 @@ def gerar_questoes():
 
         # Busca as descrições oficiais na matriz
         resp = supabase.table("matriz_curricular").select("*") \
-            .in_("codigo", codigos).eq("fonte", fonte).execute()
+            .in_("codigo", codigos).eq("fonte", fonte_db).execute()
         itens = resp.data or []
         if not itens:
             return jsonify({"sucesso": False, "erro": "Códigos não encontrados na matriz"}), 404
@@ -1570,6 +1571,7 @@ def identificar_habilidade():
         dados = request.get_json() or {}
         texto = (dados.get('texto') or '').strip()
         fonte = dados.get('fonte', 'CP')
+        fonte_db = 'Currículo Paulista' if fonte == 'CP' else fonte
         componente = dados.get('componente', 'Matemática')
         ano = dados.get('ano', 6)
 
@@ -1577,7 +1579,7 @@ def identificar_habilidade():
             return jsonify({"sucesso": False, "erro": "Cole o texto da questão"}), 400
 
         resp = supabase.table("matriz_curricular").select("*") \
-            .eq("fonte", fonte).eq("componente", componente).eq("ano", ano) \
+            .eq("fonte", fonte_db).eq("componente", componente).eq("ano", ano) \
             .order("codigo").execute()
         itens = resp.data or []
         if not itens:
