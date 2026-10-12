@@ -78,27 +78,56 @@ def api_criar_professor():
              return jsonify({"sucesso": False, "erro": "Erro interno: Chave de serviço não configurada."}), 500
 
         user_id = None
-        action_taken = "" # Para saber se criamos ou atualizamos
+        action_taken = "" 
 
-        # --- PASSO 1: BUSCAR SE O USUÁRIO JÁ EXISTE PELO EMAIL ---
-        # Usamos list_users para filtrar. Em sistemas grandes isso seria otimizado, 
-        # mas para sua escala atual (<100 usuários), é rápido e seguro.
+        # --- PASSO 1: BUSCAR USUÁRIO PELO EMAIL VIA API REST (Universal) ---
+        # Em vez de usar admin.list_users(), vamos chamar a API diretamente.
+        # Isso evita problemas de versão da biblioteca Python.
+        search_url = f"{SUPABASE_URL}/auth/admin/users"
+        headers_admin = {
+            "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+            "Content-Type": "application/json"
+        }
+        
         try:
-            all_users_res = admin_supabase.auth.admin.list_users(page=1, per_page=1000)
-            existing_user = next((u for u in all_users_res.users.items if u.email == email), None)
+            # Faz uma GET na API de usuários filtrando por email
+            resp_search = rq_http.get(search_url, params={"filter": email}, headers=headers_admin, timeout=10)
             
-            if existing_user:
-                user_id = existing_user.id
-                print(f"ℹ️ Usuário encontrado! ID: {user_id}")
+            if resp_search.status_code == 200:
+                users_list = resp_search.json().get("users", [])
                 
-                # Atualiza o metadado do nome no Auth (opcional, mas bom manter sincronizado)
-                admin_supabase.auth.admin.update_user_by_id(user_id, attributes={"full_name": nome})
+                # Verifica se encontrou algum usuário com esse email exato
+                found_user = next((u for u in users_list if u.get("email") == email), None)
                 
-                # Não tentamos criar de novo, vamos direto pro passo 3 (Perfil)
-                action_taken = "atualizado"
+                if found_user:
+                    user_id = found_user["id"]
+                    print(f"ℹ️ Usuário encontrado! ID: {user_id}")
+                    action_taken = "atualizado"
+                    
+                    # Opcional: Atualiza o nome no metadata se quiser manter sincronizado
+                    # update_url = f"{SUPABASE_URL}/auth/admin/{user_id}"
+                    # rq_http.put(update_url, json={"data": {"full_name": nome}}, headers=headers_admin)
+                else:
+                    # --- PASSO 2: CRIAR NOVO USUÁRIO SE NÃO EXISTIA ---
+                    print("🆕 Usuário não encontrado. Criando novo...")
+                    response_auth = admin_supabase.auth.admin.create_user({
+                        "email": email,
+                        "password": senha,
+                        "email_confirm": True,
+                        "user_metadata": {"full_name": nome}
+                    })
+                    user_id = response_auth.user.id
+                    action_taken = "criado"
             else:
-                # --- PASSO 2: CRIAR NOVAMENTE (SE NÃO EXISTIA) ---
-                print("🆕 Usuário não encontrado. Criando novo...")
+                # Se a busca falhar (ex: 403 Forbidden), tenta criar mesmo assim
+                print(f"⚠️ Busca falhou ({resp_search.status_code}). Tentando criar diretamente...")
+                raise Exception("Search failed") # Cai no except abaixo
+
+        except Exception as search_err:
+            # Fallback: Se der qualquer erro na busca, tentamos criar. 
+            # Se já existir, o create_user vai dar erro de duplicidade, que tratamos aqui.
+            try:
+                print("🔄 Fallback: Tentando criar usuário diretamente...")
                 response_auth = admin_supabase.auth.admin.create_user({
                     "email": email,
                     "password": senha,
@@ -106,18 +135,15 @@ def api_criar_professor():
                     "user_metadata": {"full_name": nome}
                 })
                 user_id = response_auth.user.id
-                action_taken = "criado"
-                
-        except Exception as auth_err:
-            # Se der erro na busca ou criação, cai aqui
-            error_str = str(auth_err).lower()
-            if "already registered" in error_str or "duplicate" in error_str:
-                 # Fallback: Se por acaso a busca falhou mas ele existe, tenta pegar o ID de novo ou ignora
-                 # Mas como fizemos a busca antes, isso raramente acontece aqui.
-                 pass 
-            
-            print(f"❌ Erro na etapa de Auth: {auth_err}")
-            return jsonify({"sucesso": False, "erro": f"Falha na autenticação: {str(auth_err)}"}), 500
+                action_taken = "criado_fallback"
+            except Exception as create_err:
+                err_str = str(create_err).lower()
+                if "already registered" in err_str or "duplicate" in err_str:
+                     # Se deu erro de duplicidade aqui, precisamos achar o ID de outro jeito
+                     # Ou apenas avisar ao admin que já existe
+                     return jsonify({"sucesso": False, "erro": "Este e-mail já está cadastrado. Use 'Editar Turmas' para gerenciar."}), 409
+                else:
+                     raise create_err # Erro real de criação
 
         # --- PASSO 3: GERENCIAR O PERFIL NA TABELA PUBLIC.PERFIS ---
         if user_id:
@@ -126,30 +152,26 @@ def api_criar_professor():
                 "nome_completo": nome,
                 "email": email,
                 "tipo_usuario": tipo,
-                "turmas_id": [] # Default vazio
+                "turmas_id": [] 
             }
             
             try:
-                # Tenta inserir
                 admin_supabase.table('perfis').insert(payload_perfil).execute()
                 print(f"✅ Perfil inserido.")
             except Exception as db_err:
                 err_str = str(db_err).lower()
                 if "duplicate key value violates unique constraint" in err_str or "already exists" in err_str:
-                    # Já existia perfil? Apenas atualiza os dados básicos, preservando turmas
                     print(f"ℹ️ Perfil já existia. Atualizando dados básicos...")
                     update_payload = {
                         "nome_completo": nome,
                         "email": email,
                         "tipo_usuario": tipo
-                        # NÃO tocamos em turmas_id para manter as permissões atuais
                     }
                     admin_supabase.table('perfis').update(update_payload).eq("id", user_id).execute()
-                    action_taken = "perfil_atualizado"
                 else:
                     raise db_err
             
-            msg_sucesso = f"Professor {nome} {'cadastrado' if action_taken=='criado' else 'atualizado'} com sucesso!"
+            msg_sucesso = f"Professor {nome} {'cadastrado' if 'criado' in action_taken else 'atualizado'} com sucesso!"
             return jsonify({
                 "sucesso": True, 
                 "message": msg_sucesso, 
@@ -164,7 +186,6 @@ def api_criar_professor():
         error_msg = str(e)
         print(f"❌ ERRO CRÍTICO GERAL: {e}")
         traceback.print_exc()
-        # Retorna 200 para evitar erro vermelho no browser, mas sucesso=false para o JS tratar
         return jsonify({
             "sucesso": False, 
             "erro": f"Falha geral: {error_msg}"
