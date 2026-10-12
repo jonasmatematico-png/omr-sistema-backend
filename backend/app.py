@@ -43,6 +43,90 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+
+# ==========================================================
+# 🔑 CLIENTE ADMIN PARA CRIAÇÃO DE USUÁRIOS (SEGURANÇA MÁXIMA)
+# ==========================================================
+# Usamos uma variável separada para não misturar com a chave anônima usada nas leituras comuns
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") 
+
+if not SUPABASE_SERVICE_KEY:
+    print("⚠️ AVISO CRÍTICO: SUPABASE_SERVICE_ROLE_KEY não encontrada nas variáveis de ambiente!")
+else:
+    # Cria um cliente separado que ignora RLS (Row Level Security)
+    admin_supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    print("✅ Cliente Admin do Supabase inicializado com sucesso.")
+
+
+@app.route('/api/criar-professor', methods=['POST'])
+def api_criar_professor():
+    """
+    Cria um novo professor/usuário no sistema.
+    Requer: { nome, email, senha, tipo_usuario }
+    Usa a Service Role Key para bypassar restrições de criação no Auth.
+    """
+    try:
+        dados = request.get_json() or {}
+        
+        nome = dados.get('nome')
+        email = dados.get('email')
+        senha = dados.get('senha')
+        tipo = dados.get('tipo_usuario', 'professor')
+
+        # Validações Básicas
+        if not nome or not email or not senha:
+            return jsonify({"sucesso": False, "erro": "Nome, Email e Senha são obrigatórios."}), 400
+        
+        if len(senha) < 6:
+            return jsonify({"sucesso": False, "erro": "A senha deve ter pelo menos 6 caracteres."}), 400
+
+        # Verifica se o cliente Admin foi carregado corretamente
+        if 'admin_supabase' not in globals():
+             return jsonify({"sucesso": False, "erro": "Erro interno: Chave de serviço não configurada no servidor."}), 500
+
+        # 1. CRIAR USUÁRIO NO AUTHENTICATION DO SUPABASE
+        # Isso cria o login real na tabela auth.users
+        response_auth = admin_supabase.auth.admin.create_user({
+            "email": email,
+            "password": senha,
+            "email_confirm": True, # Confirma automaticamente para permitir login imediato
+            "user_metadata": {"full_name": nome}
+        })
+        
+        user_id = response_auth.user.id
+
+        # 2. INSERIR PERFIL NA TABELA PUBLIC.PERFIS
+        # Vincula o ID do login ao perfil administrativo
+        payload_perfil = {
+            "id": user_id,
+            "nome_completo": nome,
+            "email": email,
+            "tipo_usuario": tipo,
+            "turmas_id": [] # Começa sem turmas associadas (Admin define depois via Gestão)
+        }
+        
+        # Insere usando o cliente Admin (ignora RLS de criação)
+        result_db = admin_supabase.table('perfis').insert(payload_perfil).execute()
+
+        print(f"🎉 [GESTÃO] Novo usuário criado: {nome} ({email}) - ID: {user_id}")
+        
+        return jsonify({
+            "sucesso": True, 
+            "message": f"Professor {nome} cadastrado com sucesso!", 
+            "user_id": user_id
+        }), 201
+
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        # Captura erros específicos do Supabase Auth (ex: email duplicado)
+        if "already registered" in error_msg.lower():
+            return jsonify({"sucesso": False, "erro": "Este e-mail já possui uma conta cadastrada."}), 409
+            
+        print(f"❌ ERRO AO CRIAR PROFESSOR: {e}")
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": f"Falha ao criar usuário: {error_msg}"}), 500
+
 # ==========================================================
 # 🤖 CONFIGURAÇÃO DO GEMINI (MATRIZ ANTI-COTA: chaves × modelos!)
 # ==========================================================
