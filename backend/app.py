@@ -77,8 +77,10 @@ def api_criar_professor():
         if 'admin_supabase' not in globals():
              return jsonify({"sucesso": False, "erro": "Erro interno: Chave de serviço não configurada."}), 500
 
-        # 1. TENTA CRIAR O USUÁRIO NO AUTH
-        # Se der erro de "Email already registered", capturamos e buscamos o ID existente
+        # --- LÓGICA DE CRIAÇÃO OU ATUALIZAÇÃO ---
+        user_id = None
+        
+        # 1. Tenta criar o usuário no Auth
         try:
             response_auth = admin_supabase.auth.admin.create_user({
                 "email": email,
@@ -91,70 +93,81 @@ def api_criar_professor():
             
         except Exception as auth_err:
             error_str = str(auth_err).lower()
-            if "already registered" in error_str or "already exists" in error_str:
-                # O usuário JÁ TEM LOGIN. Precisamos achar o ID dele.
-                print(f"ℹ️ Usuário já tem login. Buscando ID...")
+            # Verifica se o erro é de "já existe" (variações comuns do Supabase)
+            if "already registered" in error_str or "already exists" in error_str or "duplicate" in error_str:
+                print(f"ℹ️ Usuário já tem login. Buscando ID existente...")
                 
-                # Busca o usuário pelo email usando o cliente Admin
-                search_res = admin_supabase.auth.admin.list_users(page=1, per_page=1000) # Ajuste se tiver muitos usuários
-                
-                found_user = None
-                for u in search_res.users.items:
-                    if u.email == email:
-                        found_user = u
-                        break
-                
-                if not found_user:
-                     return jsonify({"sucesso": False, "erro": "Usuário existe no Auth mas não foi encontrado na busca."}), 404
-                
-                user_id = found_user.id
-                print(f"🔍 Encontrado ID existente: {user_id}")
-                
-                # Atualiza o nome/metadados se necessário (opcional)
-                admin_supabase.auth.admin.update_user_by_id(user_id, attributes={"full_name": nome})
+                # Busca o usuário pelo email
+                # Nota: list_users pode ser pesado se tiver muitos usuários, mas para MVP ok.
+                try:
+                    search_res = admin_supabase.auth.admin.list_users(page=1, per_page=100) 
+                    found_user = next((u for u in search_res.users.items if u.email == email), None)
+                    
+                    if found_user:
+                        user_id = found_user.id
+                        print(f"🔍 Encontrado ID existente: {user_id}")
+                        
+                        # Opcional: Atualiza o nome caso tenha mudado
+                        admin_supabase.auth.admin.update_user_by_id(user_id, attributes={"full_name": nome})
+                    else:
+                         # Se não achou na busca, mas deu erro de duplicidade, algo estranho aconteceu.
+                         return jsonify({"sucesso": False, "erro": "Usuário existe no banco mas não foi encontrado na busca."}), 404
+                        
+                except Exception as search_err:
+                     print(f"❌ Erro ao buscar usuário existente: {search_err}")
+                     return jsonify({"sucesso": False, "erro": f"Falha ao verificar usuário existente: {str(search_err)}"}), 500
             else:
-                raise auth_err # Relevanta outros erros de auth
+                # Outro erro de autenticação (ex: senha fraca, email inválido)
+                raise auth_err 
 
-        # 2. INSERE OU ATUALIZA NA TABELA PERFIS
-        payload_perfil = {
-            "id": user_id,
-            "nome_completo": nome,
-            "email": email,
-            "tipo_usuario": tipo,
-            "turmas_id": [] 
-        }
-        
-        try:
-            # Tenta inserir normalmente
-            result_db = admin_supabase.table('perfis').insert(payload_perfil).execute()
-            print(f"✅ Perfil inserido com sucesso.")
-        except Exception as db_err:
-            err_str = str(db_err).lower()
-            if "duplicate key value violates unique constraint" in err_str or "already exists" in err_str:
-                # O perfil JÁ EXISTE. Vamos apenas atualizar o tipo/nome, mantendo as turmas atuais.
-                print(f"ℹ️ Perfil já existia. Atualizando dados básicos...")
-                update_payload = {
-                    "nome_completo": nome,
-                    "email": email,
-                    "tipo_usuario": tipo
-                    # NÃO tocamos em turmas_id aqui para preservar as permissões existentes
-                }
-                admin_supabase.table('perfis').update(update_payload).eq("id", user_id).execute()
-            else:
-                raise db_err # Outros erros de banco
-
-        return jsonify({
-            "sucesso": True, 
-            "message": f"Professor {nome} cadastrado/atualizado com sucesso!", 
-            "user_id": user_id
-        }), 200
+        # 2. Insere ou Atualiza na tabela PERFIS
+        if user_id:
+            payload_perfil = {
+                "id": user_id,
+                "nome_completo": nome,
+                "email": email,
+                "tipo_usuario": tipo,
+                "turmas_id": [] 
+            }
+            
+            try:
+                # Tenta inserir
+                admin_supabase.table('perfis').insert(payload_perfil).execute()
+                print(f"✅ Perfil novo inserido.")
+            except Exception as db_err:
+                err_str = str(db_err).lower()
+                if "duplicate key value violates unique constraint" in err_str or "already exists" in err_str:
+                    # Já existia perfil? Apenas atualiza os dados básicos, preservando turmas
+                    print(f"ℹ️ Perfil já existia. Atualizando dados básicos...")
+                    update_payload = {
+                        "nome_completo": nome,
+                        "email": email,
+                        "tipo_usuario": tipo
+                        # NÃO tocamos em turmas_id para manter as permissões atuais
+                    }
+                    admin_supabase.table('perfis').update(update_payload).eq("id", user_id).execute()
+                else:
+                    raise db_err # Outros erros de banco
+            
+            return jsonify({
+                "sucesso": True, 
+                "message": f"Professor {nome} cadastrado/atualizado com sucesso!", 
+                "user_id": user_id
+            }), 200
+        else:
+            return jsonify({"sucesso": False, "erro": "Falha interna: Não foi possível determinar o ID do usuário."}), 500
 
     except Exception as e:
         import traceback
         error_msg = str(e)
         print(f"❌ ERRO CRÍTICO AO PROCESSAR PROFESSOR: {e}")
         traceback.print_exc()
-        return jsonify({"sucesso": False, "erro": f"Falha geral: {error_msg}"}), 500
+        # Retorna 200 com sucesso=False para evitar erro vermelho no console do navegador
+        # Isso torna a API mais amigável para o front-end tratar
+        return jsonify({
+            "sucesso": False, 
+            "erro": f"Falha geral: {error_msg}"
+        }), 200 # MUDANÇA CHAVE: Retorna 200 aqui para o JS não cair no catch de erro HTTP
 
 # ==========================================================
 # 🤖 CONFIGURAÇÃO DO GEMINI (MATRIZ ANTI-COTA: chaves × modelos!)
