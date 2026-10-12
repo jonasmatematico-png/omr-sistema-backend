@@ -60,11 +60,6 @@ else:
 
 @app.route('/api/criar-professor', methods=['POST'])
 def api_criar_professor():
-    """
-    Cria um novo professor/usuário no sistema.
-    Requer: { nome, email, senha, tipo_usuario }
-    Usa a Service Role Key para bypassar restrições de criação no Auth.
-    """
     try:
         dados = request.get_json() or {}
         
@@ -73,59 +68,93 @@ def api_criar_professor():
         senha = dados.get('senha')
         tipo = dados.get('tipo_usuario', 'professor')
 
-        # Validações Básicas
         if not nome or not email or not senha:
             return jsonify({"sucesso": False, "erro": "Nome, Email e Senha são obrigatórios."}), 400
         
         if len(senha) < 6:
             return jsonify({"sucesso": False, "erro": "A senha deve ter pelo menos 6 caracteres."}), 400
 
-        # Verifica se o cliente Admin foi carregado corretamente
         if 'admin_supabase' not in globals():
-             return jsonify({"sucesso": False, "erro": "Erro interno: Chave de serviço não configurada no servidor."}), 500
+             return jsonify({"sucesso": False, "erro": "Erro interno: Chave de serviço não configurada."}), 500
 
-        # 1. CRIAR USUÁRIO NO AUTHENTICATION DO SUPABASE
-        # Isso cria o login real na tabela auth.users
-        response_auth = admin_supabase.auth.admin.create_user({
-            "email": email,
-            "password": senha,
-            "email_confirm": True, # Confirma automaticamente para permitir login imediato
-            "user_metadata": {"full_name": nome}
-        })
-        
-        user_id = response_auth.user.id
+        # 1. TENTA CRIAR O USUÁRIO NO AUTH
+        # Se der erro de "Email already registered", capturamos e buscamos o ID existente
+        try:
+            response_auth = admin_supabase.auth.admin.create_user({
+                "email": email,
+                "password": senha,
+                "email_confirm": True,
+                "user_metadata": {"full_name": nome}
+            })
+            user_id = response_auth.user.id
+            print(f"🆕 Usuário criado no Auth: {user_id}")
+            
+        except Exception as auth_err:
+            error_str = str(auth_err).lower()
+            if "already registered" in error_str or "already exists" in error_str:
+                # O usuário JÁ TEM LOGIN. Precisamos achar o ID dele.
+                print(f"ℹ️ Usuário já tem login. Buscando ID...")
+                
+                # Busca o usuário pelo email usando o cliente Admin
+                search_res = admin_supabase.auth.admin.list_users(page=1, per_page=1000) # Ajuste se tiver muitos usuários
+                
+                found_user = None
+                for u in search_res.users.items:
+                    if u.email == email:
+                        found_user = u
+                        break
+                
+                if not found_user:
+                     return jsonify({"sucesso": False, "erro": "Usuário existe no Auth mas não foi encontrado na busca."}), 404
+                
+                user_id = found_user.id
+                print(f"🔍 Encontrado ID existente: {user_id}")
+                
+                # Atualiza o nome/metadados se necessário (opcional)
+                admin_supabase.auth.admin.update_user_by_id(user_id, attributes={"full_name": nome})
+            else:
+                raise auth_err # Relevanta outros erros de auth
 
-        # 2. INSERIR PERFIL NA TABELA PUBLIC.PERFIS
-        # Vincula o ID do login ao perfil administrativo
+        # 2. INSERE OU ATUALIZA NA TABELA PERFIS
         payload_perfil = {
             "id": user_id,
             "nome_completo": nome,
             "email": email,
             "tipo_usuario": tipo,
-            "turmas_id": [] # Começa sem turmas associadas (Admin define depois via Gestão)
+            "turmas_id": [] 
         }
         
-        # Insere usando o cliente Admin (ignora RLS de criação)
-        result_db = admin_supabase.table('perfis').insert(payload_perfil).execute()
+        try:
+            # Tenta inserir normalmente
+            result_db = admin_supabase.table('perfis').insert(payload_perfil).execute()
+            print(f"✅ Perfil inserido com sucesso.")
+        except Exception as db_err:
+            err_str = str(db_err).lower()
+            if "duplicate key value violates unique constraint" in err_str or "already exists" in err_str:
+                # O perfil JÁ EXISTE. Vamos apenas atualizar o tipo/nome, mantendo as turmas atuais.
+                print(f"ℹ️ Perfil já existia. Atualizando dados básicos...")
+                update_payload = {
+                    "nome_completo": nome,
+                    "email": email,
+                    "tipo_usuario": tipo
+                    # NÃO tocamos em turmas_id aqui para preservar as permissões existentes
+                }
+                admin_supabase.table('perfis').update(update_payload).eq("id", user_id).execute()
+            else:
+                raise db_err # Outros erros de banco
 
-        print(f"🎉 [GESTÃO] Novo usuário criado: {nome} ({email}) - ID: {user_id}")
-        
         return jsonify({
             "sucesso": True, 
-            "message": f"Professor {nome} cadastrado com sucesso!", 
+            "message": f"Professor {nome} cadastrado/atualizado com sucesso!", 
             "user_id": user_id
-        }), 201
+        }), 200
 
     except Exception as e:
         import traceback
         error_msg = str(e)
-        # Captura erros específicos do Supabase Auth (ex: email duplicado)
-        if "already registered" in error_msg.lower():
-            return jsonify({"sucesso": False, "erro": "Este e-mail já possui uma conta cadastrada."}), 409
-            
-        print(f"❌ ERRO AO CRIAR PROFESSOR: {e}")
+        print(f"❌ ERRO CRÍTICO AO PROCESSAR PROFESSOR: {e}")
         traceback.print_exc()
-        return jsonify({"sucesso": False, "erro": f"Falha ao criar usuário: {error_msg}"}), 500
+        return jsonify({"sucesso": False, "erro": f"Falha geral: {error_msg}"}), 500
 
 # ==========================================================
 # 🤖 CONFIGURAÇÃO DO GEMINI (MATRIZ ANTI-COTA: chaves × modelos!)
