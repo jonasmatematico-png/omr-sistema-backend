@@ -75,7 +75,7 @@ def api_criar_professor():
             return jsonify({"sucesso": False, "erro": "A senha deve ter pelo menos 6 caracteres."}), 400
 
         if 'admin_supabase' not in globals():
-            return jsonify({"sucesso": False, "erro": "Erro interno: Chave de serviço não configurada."}), 500
+             return jsonify({"sucesso": False, "erro": "Erro interno: Chave de serviço não configurada."}), 500
 
         user_id = None
         action_taken = "" 
@@ -95,40 +95,45 @@ def api_criar_professor():
         except Exception as auth_err:
             error_str = str(auth_err).lower()
             
-            # Se o erro for de "já existe", buscamos o ID dele manualmente usando list_users
+            # Se o erro for de "já existe", buscamos o ID dele VIA HTTP DIRECTO
             if "already registered" in error_str or "duplicate" in error_str:
-                print(f"ℹ️ Usuário já existe. Buscando ID...")
+                print(f"ℹ️ Usuário já existe. Buscando ID via API REST...")
                 
-                # Usa list_users mas trata o retorno como lista simples se necessário
                 try:
-                    users_res = admin_supabase.auth.admin.list_users(page=1, per_page=1000)
+                    # Usa a API REST direta do Supabase Auth Admin
+                    url_search = f"{SUPABASE_URL}/auth/admin/users"
+                    headers_admin = {
+                        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                        "Content-Type": "application/json"
+                    }
                     
-                    # Adaptação para diferentes versões do SDK
-                    if hasattr(users_res, 'users'):
-                        users_list = users_res.users.items
-                    elif isinstance(users_res, dict) and 'users' in users_res:
-                        users_list = users_res['users']
-                    else:
-                        users_list = [] # Fallback vazio
+                    # Faz GET filtrando pelo email
+                    resp_search = rq_http.get(url_search, params={"filter": email}, headers=headers_admin, timeout=10)
                     
-                    found_user = next((u for u in users_list if u.email == email), None)
-                    
-                    if found_user:
-                        user_id = found_user.id
-                        action_taken = "encontrado_existente"
-                        print(f"🔍 ID encontrado: {user_id}")
+                    if resp_search.status_code == 200:
+                        data_json = resp_search.json()
+                        users_list = data_json.get("users", [])
                         
-                        # Atualiza o nome no metadata
-                        admin_supabase.auth.admin.update_user_by_id(user_id, attributes={"full_name": nome})
-                    else:
-                        # Se não achou na lista, mas deu erro de duplicidade, algo muito estranho aconteceu.
-                        # Vamos assumir que ele existe e tentar inserir o perfil direto (vai dar erro depois se não tiver ID)
-                        return jsonify({"sucesso": False, "erro": "Usuário existe mas não foi localizado na lista."}), 404
+                        # Procura exatamente esse email
+                        found_user = next((u for u in users_list if u.get("email") == email), None)
                         
+                        if found_user:
+                            user_id = found_user["id"]
+                            action_taken = "encontrado_existente"
+                            print(f"🔍 ID encontrado via REST: {user_id}")
+                            
+                            # Atualiza o nome no metadata se quiser manter sincronizado
+                            try:
+                                admin_supabase.auth.admin.update_user_by_id(user_id, attributes={"full_name": nome})
+                            except: pass # Ignora erros de atualização de metadata
+                        else:
+                             return jsonify({"sucesso": False, "erro": "Usuário existe mas não foi localizado na lista REST."}), 404
+                    else:
+                         return jsonify({"sucesso": False, "erro": f"Falha na busca REST ({resp_search.status_code})."}), 500
+
                 except Exception as search_err:
-                    print(f"❌ Erro ao buscar usuário existente: {search_err}")
-                    # Se a busca falhar, não conseguimos continuar sem o ID
-                    return jsonify({"sucesso": False, "erro": f"Falha ao verificar existência: {str(search_err)}"}), 500
+                     print(f"❌ Erro ao buscar usuário existente via REST: {search_err}")
+                     return jsonify({"sucesso": False, "erro": f"Falha técnica ao verificar existência: {str(search_err)}"}), 500
             else:
                 # Outro erro de criação (ex: senha fraca, email inválido)
                 raise auth_err 
