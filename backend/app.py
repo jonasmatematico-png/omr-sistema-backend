@@ -74,13 +74,14 @@ def api_criar_professor():
         if len(senha) < 6:
             return jsonify({"sucesso": False, "erro": "A senha deve ter pelo menos 6 caracteres."}), 400
 
+        # Verifica se o cliente admin foi criado globalmente
         if 'admin_supabase' not in globals():
-             return jsonify({"sucesso": False, "erro": "Erro interno: Chave de serviço não configurada."}), 500
+             return jsonify({"sucesso": False, "erro": "Erro interno: Chave de serviço não configurada no servidor."}), 500
 
         user_id = None
         action_taken = "" 
 
-        # --- PASSO 1: TENTA CRIAR O USUÁRIO NO AUTH ---
+        # --- PASSO ÚNICO: TENTA CRIAR. SE FALHAR POR DUPLICIDADE, AVISA AMIGÁVELMENTE. ---
         try:
             response_auth = admin_supabase.auth.admin.create_user({
                 "email": email,
@@ -95,48 +96,16 @@ def api_criar_professor():
         except Exception as auth_err:
             error_str = str(auth_err).lower()
             
-            # Se o erro for de "já existe", buscamos o ID dele VIA HTTP DIRECTO
+            # Se for erro de duplicidade, NÃO tentamos buscar. Apenas avisamos.
             if "already registered" in error_str or "duplicate" in error_str:
-                print(f"ℹ️ Usuário já existe. Buscando ID via API REST...")
-                
-                try:
-                    # Usa a API REST direta do Supabase Auth Admin
-                    url_search = f"{SUPABASE_URL}/auth/admin/users"
-                    headers_admin = {
-                        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
-                        "Content-Type": "application/json"
-                    }
-                    
-                    # Faz GET filtrando pelo email
-                    resp_search = rq_http.get(url_search, params={"filter": email}, headers=headers_admin, timeout=10)
-                    
-                    if resp_search.status_code == 200:
-                        data_json = resp_search.json()
-                        users_list = data_json.get("users", [])
-                        
-                        # Procura exatamente esse email
-                        found_user = next((u for u in users_list if u.get("email") == email), None)
-                        
-                        if found_user:
-                            user_id = found_user["id"]
-                            action_taken = "encontrado_existente"
-                            print(f"🔍 ID encontrado via REST: {user_id}")
-                            
-                            # Atualiza o nome no metadata se quiser manter sincronizado
-                            try:
-                                admin_supabase.auth.admin.update_user_by_id(user_id, attributes={"full_name": nome})
-                            except: pass # Ignora erros de atualização de metadata
-                        else:
-                             return jsonify({"sucesso": False, "erro": "Usuário existe mas não foi localizado na lista REST."}), 404
-                    else:
-                         return jsonify({"sucesso": False, "erro": f"Falha na busca REST ({resp_search.status_code})."}), 500
-
-                except Exception as search_err:
-                     print(f"❌ Erro ao buscar usuário existente via REST: {search_err}")
-                     return jsonify({"sucesso": False, "erro": f"Falha técnica ao verificar existência: {str(search_err)}"}), 500
-            else:
-                # Outro erro de criação (ex: senha fraca, email inválido)
-                raise auth_err 
+                print(f"ℹ️ Tentativa de criar usuário existente: {email}")
+                return jsonify({
+                    "sucesso": False, 
+                    "erro": f"O e-mail '{email}' já está cadastrado no sistema. Utilize o botão 'Editar Turmas' na lista abaixo para gerenciar este professor."
+                }), 200 # Retorna 200 para o JS não dar erro vermelho, mas sucesso=false
+            
+            # Qualquer outro erro real (ex: senha fraca, email inválido)
+            raise auth_err 
 
         # --- PASSO 2: GERENCIAR O PERFIL NA TABELA PUBLIC.PERFIS ---
         if user_id:
@@ -164,7 +133,7 @@ def api_criar_professor():
                 else:
                     raise db_err
             
-            msg_sucesso = f"Professor {nome} {'cadastrado' if action_taken=='criado' else 'atualizado'} com sucesso!"
+            msg_sucesso = f"Professor {nome} cadastrado com sucesso!"
             return jsonify({
                 "sucesso": True, 
                 "message": msg_sucesso, 
@@ -179,7 +148,6 @@ def api_criar_professor():
         error_msg = str(e)
         print(f"❌ ERRO CRÍTICO GERAL: {e}")
         traceback.print_exc()
-        # Retorna 200 para evitar erro vermelho no browser, mas sucesso=false para o JS tratar
         return jsonify({
             "sucesso": False, 
             "erro": f"Falha geral: {error_msg}"
