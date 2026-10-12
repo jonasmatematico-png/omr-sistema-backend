@@ -77,63 +77,62 @@ def api_criar_professor():
         if 'admin_supabase' not in globals():
              return jsonify({"sucesso": False, "erro": "Erro interno: Chave de serviço não configurada."}), 500
 
-        # --- LÓGICA DE CRIAÇÃO OU ATUALIZAÇÃO ---
         user_id = None
-        
-        # 1. Tenta criar o usuário no Auth
-        try:
-            response_auth = admin_supabase.auth.admin.create_user({
-                "email": email,
-                "password": senha,
-                "email_confirm": True,
-                "user_metadata": {"full_name": nome}
-            })
-            user_id = response_auth.user.id
-            print(f"🆕 Usuário criado no Auth: {user_id}")
-            
-        except Exception as auth_err:
-            error_str = str(auth_err).lower()
-            # Verifica se o erro é de "já existe" (variações comuns do Supabase)
-            if "already registered" in error_str or "already exists" in error_str or "duplicate" in error_str:
-                print(f"ℹ️ Usuário já tem login. Buscando ID existente...")
-                
-                # Busca o usuário pelo email
-                # Nota: list_users pode ser pesado se tiver muitos usuários, mas para MVP ok.
-                try:
-                    search_res = admin_supabase.auth.admin.list_users(page=1, per_page=100) 
-                    found_user = next((u for u in search_res.users.items if u.email == email), None)
-                    
-                    if found_user:
-                        user_id = found_user.id
-                        print(f"🔍 Encontrado ID existente: {user_id}")
-                        
-                        # Opcional: Atualiza o nome caso tenha mudado
-                        admin_supabase.auth.admin.update_user_by_id(user_id, attributes={"full_name": nome})
-                    else:
-                         # Se não achou na busca, mas deu erro de duplicidade, algo estranho aconteceu.
-                         return jsonify({"sucesso": False, "erro": "Usuário existe no banco mas não foi encontrado na busca."}), 404
-                        
-                except Exception as search_err:
-                     print(f"❌ Erro ao buscar usuário existente: {search_err}")
-                     return jsonify({"sucesso": False, "erro": f"Falha ao verificar usuário existente: {str(search_err)}"}), 500
-            else:
-                # Outro erro de autenticação (ex: senha fraca, email inválido)
-                raise auth_err 
+        action_taken = "" # Para saber se criamos ou atualizamos
 
-        # 2. Insere ou Atualiza na tabela PERFIS
+        # --- PASSO 1: BUSCAR SE O USUÁRIO JÁ EXISTE PELO EMAIL ---
+        # Usamos list_users para filtrar. Em sistemas grandes isso seria otimizado, 
+        # mas para sua escala atual (<100 usuários), é rápido e seguro.
+        try:
+            all_users_res = admin_supabase.auth.admin.list_users(page=1, per_page=1000)
+            existing_user = next((u for u in all_users_res.users.items if u.email == email), None)
+            
+            if existing_user:
+                user_id = existing_user.id
+                print(f"ℹ️ Usuário encontrado! ID: {user_id}")
+                
+                # Atualiza o metadado do nome no Auth (opcional, mas bom manter sincronizado)
+                admin_supabase.auth.admin.update_user_by_id(user_id, attributes={"full_name": nome})
+                
+                # Não tentamos criar de novo, vamos direto pro passo 3 (Perfil)
+                action_taken = "atualizado"
+            else:
+                # --- PASSO 2: CRIAR NOVAMENTE (SE NÃO EXISTIA) ---
+                print("🆕 Usuário não encontrado. Criando novo...")
+                response_auth = admin_supabase.auth.admin.create_user({
+                    "email": email,
+                    "password": senha,
+                    "email_confirm": True,
+                    "user_metadata": {"full_name": nome}
+                })
+                user_id = response_auth.user.id
+                action_taken = "criado"
+                
+        except Exception as auth_err:
+            # Se der erro na busca ou criação, cai aqui
+            error_str = str(auth_err).lower()
+            if "already registered" in error_str or "duplicate" in error_str:
+                 # Fallback: Se por acaso a busca falhou mas ele existe, tenta pegar o ID de novo ou ignora
+                 # Mas como fizemos a busca antes, isso raramente acontece aqui.
+                 pass 
+            
+            print(f"❌ Erro na etapa de Auth: {auth_err}")
+            return jsonify({"sucesso": False, "erro": f"Falha na autenticação: {str(auth_err)}"}), 500
+
+        # --- PASSO 3: GERENCIAR O PERFIL NA TABELA PUBLIC.PERFIS ---
         if user_id:
             payload_perfil = {
                 "id": user_id,
                 "nome_completo": nome,
                 "email": email,
                 "tipo_usuario": tipo,
-                "turmas_id": [] 
+                "turmas_id": [] # Default vazio
             }
             
             try:
                 # Tenta inserir
                 admin_supabase.table('perfis').insert(payload_perfil).execute()
-                print(f"✅ Perfil novo inserido.")
+                print(f"✅ Perfil inserido.")
             except Exception as db_err:
                 err_str = str(db_err).lower()
                 if "duplicate key value violates unique constraint" in err_str or "already exists" in err_str:
@@ -146,28 +145,30 @@ def api_criar_professor():
                         # NÃO tocamos em turmas_id para manter as permissões atuais
                     }
                     admin_supabase.table('perfis').update(update_payload).eq("id", user_id).execute()
+                    action_taken = "perfil_atualizado"
                 else:
-                    raise db_err # Outros erros de banco
+                    raise db_err
             
+            msg_sucesso = f"Professor {nome} {'cadastrado' if action_taken=='criado' else 'atualizado'} com sucesso!"
             return jsonify({
                 "sucesso": True, 
-                "message": f"Professor {nome} cadastrado/atualizado com sucesso!", 
-                "user_id": user_id
+                "message": msg_sucesso, 
+                "user_id": user_id,
+                "action": action_taken
             }), 200
         else:
-            return jsonify({"sucesso": False, "erro": "Falha interna: Não foi possível determinar o ID do usuário."}), 500
+            return jsonify({"sucesso": False, "erro": "Falha interna: ID do usuário não determinado."}), 500
 
     except Exception as e:
         import traceback
         error_msg = str(e)
-        print(f"❌ ERRO CRÍTICO AO PROCESSAR PROFESSOR: {e}")
+        print(f"❌ ERRO CRÍTICO GERAL: {e}")
         traceback.print_exc()
-        # Retorna 200 com sucesso=False para evitar erro vermelho no console do navegador
-        # Isso torna a API mais amigável para o front-end tratar
+        # Retorna 200 para evitar erro vermelho no browser, mas sucesso=false para o JS tratar
         return jsonify({
             "sucesso": False, 
             "erro": f"Falha geral: {error_msg}"
-        }), 200 # MUDANÇA CHAVE: Retorna 200 aqui para o JS não cair no catch de erro HTTP
+        }), 200
 
 # ==========================================================
 # 🤖 CONFIGURAÇÃO DO GEMINI (MATRIZ ANTI-COTA: chaves × modelos!)
