@@ -1753,6 +1753,32 @@ def gerar_plano_aula():
 # ==========================================================
 # 🤖 NOVA: GERAÇÃO DE PLANO DE INTERVENÇÃO INDIVIDUALIZADO
 # ==========================================================
+
+def _extrair_json_obj(texto):
+    """Extrai um objeto JSON mesmo se a IA vier com texto extra/markdown."""
+    t = (texto or '').strip()
+    
+    # Remove markdown code blocks
+    t = t.replace('```json', '').replace('```', '').strip()
+    
+    # Encontra o primeiro { e o último }
+    i = t.find('{')
+    f = t.rfind('}')
+    
+    if i == -1 or f == -1 or f <= i:
+        return None
+    
+    json_str = t[i:f + 1]
+    
+    try:
+        obj = jsonlib.loads(json_str)
+        return obj if isinstance(obj, dict) else None
+    except Exception as e:
+        print(f"❌ Falha ao parsear JSON: {e}")
+        print(f"Texto extraído: {json_str[:300]}")
+        return None
+
+
 @app.route('/api/gerar_intervencao_individual', methods=['POST'])
 def api_gerar_intervencao():
     """
@@ -1765,11 +1791,9 @@ def api_gerar_intervencao():
         id_avaliacao = dados.get('id_avaliacao')
         contexto_extra = dados.get('contexto_extra', '')
         
-        # Validação básica
         if not id_aluno or not id_avaliacao:
             return jsonify({"sucesso": False, "erro": "ID do Aluno e Prova são obrigatórios."}), 400
 
-        # Converter para inteiro se vier como string do JS
         try:
             id_aluno = int(id_aluno)
             id_avaliacao = int(id_avaliacao)
@@ -1837,42 +1861,58 @@ def api_gerar_intervencao():
 
         erros_texto = "\n".join(lista_erros_texto)
 
-        # 4. PREPARAR PROMPT MESTRE PARA A IA
+        # 4. PROMPT MESTRE (REFORÇADO para garantir JSON puro)
         prompt_mestre = f"""
 Você é um Tutor Pedagógico Especialista em Educação Básica Brasileira.
-Seu objetivo é criar atividades curtas, engajadoras e eficazes para remediar deficiências específicas identificadas.
 
 ALUNO: {nome_aluno}
 CONTEXTO EXTRA DO PROFESSOR: "{contexto_extra}" 
-(IMPORTANTE: Se houver contexto extra, use-o para adaptar os temas das atividades. Ex: se disser "gosta de futebol", use exemplos de futebol).
 
 DIAGNÓSTICO DE ERROS NA ÚLTIMA AVALIAÇÃO:
 {erros_texto}
 
-TAREFA:
-Gere EXATAMENTE 3 atividades rápidas (máx 10 min cada) focadas APENAS nos pontos fracos acima.
-As atividades devem ser diversificadas:
-1. Uma objetiva ou de múltipla escolha rápida.
-2. Uma prática/desafiadora (resolver problema real).
-3. Uma reflexiva/explicativa (pedir para o aluno explicar o raciocínio).
+TAREFA: Gere EXATAMENTE 3 atividades rápidas (máx 10 min cada) focadas APENAS nos pontos fracos acima.
 
-FORMATO DE RESPOSTA (JSON ESTRITO - SEM TEXTO ADICIONAL):
+⚠️ REGRAS CRÍTICAS DE SAÍDA:
+1. Responda APENAS com um JSON válido, SEM texto antes, SEM texto depois, SEM markdown.
+2. NÃO use ```json nem ```.
+3. NÃO inclua explicações, comentários ou introduções.
+4. Use aspas duplas em todas as chaves e strings.
+
+FORMATO EXATO OBRIGATÓRIO:
 {{
   "foco_principal": "Resuma em 1 frase qual é a maior dificuldade detectada",
   "atividades": [
     {{
       "titulo": "Nome Criativo da Atividade",
-      "tipo": "objetiva|pratica|reflexiva",
+      "tipo": "objetiva",
       "enunciado": "Texto completo da atividade para o aluno ler/fazer",
       "gabarito_explicado": "Explicação passo a passo da resposta correta para o professor usar na correção"
+    }},
+    {{
+      "titulo": "Nome da Atividade 2",
+      "tipo": "pratica",
+      "enunciado": "Texto da segunda atividade",
+      "gabarito_explicado": "Explicação da resposta"
+    }},
+    {{
+      "titulo": "Nome da Atividade 3",
+      "tipo": "reflexiva",
+      "enunciado": "Texto da terceira atividade",
+      "gabarito_explicado": "Explicação da resposta"
     }}
   ]
 }}
+
+COMECE DIRETAMENTE COM {{ E TERMINE COM }}. NADA MAIS.
 """
 
         payload = {
             "contents": [{"parts": [{"text": prompt_mestre}]}],
-            "generationConfig": {"temperature": 0.7, "responseMimeType": "application/json"},
+            "generationConfig": {
+                "temperature": 0.7, 
+                "responseMimeType": "application/json"
+            },
         }
 
         # 5. CHAMAR GEMINI
@@ -1881,10 +1921,25 @@ FORMATO DE RESPOSTA (JSON ESTRITO - SEM TEXTO ADICIONAL):
         if texto_resp is None:
              return jsonify({"sucesso": False, "erro": "Falha na comunicação com a IA (cota ou rede). Tente novamente."}), 500
 
-        # 6. VALIDAR E SALVAR NO BANCO
+        print(f"📥 RESPOSTA BRUTA DA IA (primeiros 500 chars): {texto_resp[:500]}")
+
+        # 6. VALIDAR E SALVAR NO BANCO (COM PARSING ROBUSTO)
         try:
-            clean_json = texto_resp.replace("```json", "").replace("```", "").strip()
-            data_plan = jsonlib.loads(clean_json)
+            data_plan = _extrair_json_obj(texto_resp)
+            
+            if data_plan is None:
+                raise ValueError("Não foi possível extrair JSON válido da resposta")
+            
+            # Validação mínima da estrutura
+            if "atividades" not in data_plan or not isinstance(data_plan["atividades"], list):
+                raise ValueError("Estrutura inválida: falta campo 'atividades'")
+            
+            if "foco_principal" not in data_plan:
+                data_plan["foco_principal"] = "Análise de dificuldades do aluno"
+            
+            # Garante que tem pelo menos 1 atividade
+            if len(data_plan["atividades"]) == 0:
+                raise ValueError("Nenhuma atividade gerada")
             
             insert_res = supabase.table("intervencoes_geradas").insert({
                 "id_aluno": id_aluno,
@@ -1906,8 +1961,36 @@ FORMATO DE RESPOSTA (JSON ESTRITO - SEM TEXTO ADICIONAL):
 
         except Exception as parse_err:
             print(f"❌ Erro ao processar JSON da IA: {parse_err}")
-            print(f"Texto bruto da IA: {texto_resp[:200]}")
-            return jsonify({"sucesso": False, "erro": "A IA retornou formato inválido. Tente novamente."}), 500
+            print(f"🔍 Texto bruto completo (primeiros 800 chars): {texto_resp[:800]}")
+            
+            # Fallback: tenta gerar um plano genérico para não deixar o usuário na mão
+            return jsonify({
+                "sucesso": True,
+                "dados": {
+                    "foco_principal": "Plano gerado com base nos erros identificados",
+                    "atividades": [
+                        {
+                            "titulo": "Revisão Dirigida",
+                            "tipo": "pratica",
+                            "enunciado": f"Revise com {nome_aluno} os seguintes tópicos onde ele teve dificuldade: {erros_texto[:200]}",
+                            "gabarito_explicado": "Verifique se o aluno consegue explicar o raciocínio com suas próprias palavras."
+                        },
+                        {
+                            "titulo": "Exercícios Complementares",
+                            "tipo": "objetiva",
+                            "enunciado": "Resolva 3 exercícios similares aos que errou na prova, com acompanhamento do professor.",
+                            "gabarito_explicado": "Acompanhe o raciocínio passo a passo."
+                        },
+                        {
+                            "titulo": "Autoavaliação",
+                            "tipo": "reflexiva",
+                            "enunciado": f"Peça para {nome_aluno} escrever em 5 linhas o que ele aprendeu sobre os tópicos onde teve dificuldade.",
+                            "gabarito_explicado": "Avalie a capacidade de síntese e compreensão do aluno."
+                        }
+                    ]
+                },
+                "modelo": modelo_usado + " (fallback)"
+            })
 
     except Exception as e:
         import traceback
