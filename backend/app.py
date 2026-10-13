@@ -1691,63 +1691,14 @@ def gerar_questoes():
             "modelo": modelo,
             "chave_usada": chave,
         })
+
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
-
-@app.route('/api/identificar_habilidade', methods=['POST'])
-def identificar_habilidade():
-    """🔍 IA diz qual habilidade/descritor uma questão existente avalia."""
-    try:
-        dados = request.get_json() or {}
-        texto = (dados.get('texto') or '').strip()
-        fonte = dados.get('fonte', 'CP')
-        fonte_db = 'Currículo Paulista' if fonte == 'CP' else fonte
-        componente = dados.get('componente', 'Matemática')
-        ano = dados.get('ano', 6)
-
-        if not texto:
-            return jsonify({"sucesso": False, "erro": "Cole o texto da questão"}), 400
-
-        resp = supabase.table("matriz_curricular").select("*") \
-            .eq("fonte", fonte_db).eq("componente", componente).eq("ano", ano) \
-            .order("codigo").execute()
-        itens = resp.data or []
-        if not itens:
-            return jsonify({"sucesso": False, "erro": "Matriz vazia para essa fonte/ano"}), 404
-
-        lista = "\n".join(f"{it['codigo']}) {it['habilidade']}" for it in itens)
-
-        prompt = (
-            f"Você é um especialista em avaliação educacional ({componente}, {ano}º ano, matriz {fonte}).\n"
-            f"Leia a QUESTÃO do professor e indique os até 3 códigos da matriz que MELHOR correspondem ao que ela exige, "
-            f"do mais aderente para o menos aderente.\n"
-            f"MATRIZ:\n{lista}\n\nQUESTÃO:\n{texto}\n\n"
-            f'Responda SOMENTE um array JSON válido no formato:\n'
-            f'[{{"codigo":"...","aderencia":95,"justificativa":"..."}}]'
-        )
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
-        }
-        texto_resp, modelo, chave = _gemini_chamar(payload)
-        if texto_resp is None:
-            return jsonify({"sucesso": False, "erro": f"Sem cota em todas as chaves: {chave}"}), 429
-
-        resultados = _extrair_json_array(texto_resp)
-        if not resultados:
-            return jsonify({"sucesso": False, "erro": "A IA não retornou análise válida"}), 502
-
-        print(f"🔍 [IDENTIFICAR] análise concluída com {modelo} (chave {chave})")
-        return jsonify({"sucesso": True, "resultados": resultados, "modelo": modelo})
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"sucesso": False, "erro": str(e)}), 500
-
-        # ==========================================================
+# ==========================================================
 # 🚀 NOVO: PLANEJADOR DE AULA PASSO A PASSO COM IA
 # ==========================================================
 @app.route('/api/gerar_plano_aula', methods=['POST'])
@@ -1785,7 +1736,6 @@ def gerar_plano_aula():
         if texto is None:
             return jsonify({"sucesso": False, "erro": f"Sem cota em todas as chaves: {chave}"}), 429
 
-        import json as jsonlib
         try:
             texto_limpo = texto.replace("```json", "").replace("```", "").strip()
             resposta_ia = jsonlib.loads(texto_limpo)
@@ -1805,10 +1755,9 @@ def gerar_plano_aula():
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
-        # ==========================================================
+# ==========================================================
 # 🤖 NOVA: GERAÇÃO DE PLANO DE INTERVENÇÃO INDIVIDUALIZADO
 # ==========================================================
-
 @app.route('/api/gerar_intervencao_individual', methods=['POST'])
 def api_gerar_intervencao():
     """
@@ -1840,7 +1789,6 @@ def api_gerar_intervencao():
         nome_aluno = r_aluno.data.get('nome_completo', 'Aluno Desconhecido')
 
         # 2. BUSCAR ERROS EM QUESTÕES OBJETIVAS
-        # Filtra respostas incorretas desta prova
         r_obj = supabase.table("respostas") \
             .select("id_questao, correta") \
             .eq("id_aluno", id_aluno) \
@@ -1853,7 +1801,6 @@ def api_gerar_intervencao():
         
         if r_obj.data:
             for q in r_obj.data:
-                # Busca detalhe da questão para saber o descritor/habilidade
                 det_q = supabase.table("questoes") \
                     .select("descritor, habilidade, enunciado") \
                     .eq("id", q['id_questao']) \
@@ -1861,7 +1808,6 @@ def api_gerar_intervencao():
                 
                 if det_q.data:
                     desc = det_q.data.get('descritor') or det_q.data.get('habilidade') or "Conteúdo Geral"
-                    # Trunca o enunciado para não ficar gigante no prompt
                     enun_short = (det_q.data.get('enunciado') or "")[:50] + "..."
                     lista_erros_texto.append(f"- Objetiva Q{q['id_questao']} ({desc}): Enunciado parcial: '{enun_short}'")
 
@@ -1942,17 +1888,12 @@ FORMATO DE RESPOSTA (JSON ESTRITO - SEM TEXTO ADICIONAL):
 
         # 6. VALIDAR E SALVAR NO BANCO
         try:
-            # Limpa markdown se houver
             clean_json = texto_resp.replace("```json", "").replace("```", "").strip()
             data_plan = jsonlib.loads(clean_json)
             
-            # Insere na tabela nova
-            # Nota: id_professor pode ser null se não tivermos o token aqui, mas vamos tentar pegar do header se possível
-            # Por enquanto, deixamos null ou buscamos via email se necessário. Para MVP, null é aceitável.
-            
             insert_res = supabase.table("intervencoes_geradas").insert({
                 "id_aluno": id_aluno,
-                "id_professor": None, # TODO: Implementar captura de UID do admin/professor logado
+                "id_professor": None, 
                 "id_avaliacao": id_avaliacao,
                 "foco_principal": data_plan.get("foco_principal"),
                 "contexto_extra": contexto_extra,
@@ -1970,8 +1911,80 @@ FORMATO DE RESPOSTA (JSON ESTRITO - SEM TEXTO ADICIONAL):
 
         except Exception as parse_err:
             print(f"❌ Erro ao processar JSON da IA: {parse_err}")
-            print(f"Texto bruto da IA: {texto_resp[:200]}") # Loga parte do texto para debug
+            print(f"Texto bruto da IA: {texto_resp[:200]}")
             return jsonify({"sucesso": False, "erro": "A IA retornou formato inválido. Tente novamente."}), 500
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+# ==========================================================
+# 🏁 INICIALIZAÇÃO DO SERVIDOR
+# ==========================================================
+if __name__ == '__main__':
+    print("🚨🚨 OMR SISTEMA 2.0 - BACKEND COMPLETO 🚨🚨🚨")
+    print(f"🔗 Supabase URL: {SUPABASE_URL}")
+    print(f"🔑 Gemini chaves: {len(GEMINI_CHAVES)} configurada(s)")
+    print(f"🤖 Gemini modelos: {GEMINI_MODELOS}")
+    print(f"📄 Relatórios PDF: {'✅ ATIVOS' if PDF_OK else '❌ INATIVOS (instalar reportlab)'}")
+    port = int(os.environ.get("PORT", 10000))
+    print(f"📡 Servidor rodando na porta: {port}")
+    app.run(host='0.0.0.0', port=port, debug=False)
+
+# ==========================================================
+# 🚀 NOVO: GERADOR DE PLANO DE RECUPERAÇÃO DIRIGIDA
+# ==========================================================
+@app.route('/api/gerar_plano_recuperacao', methods=['POST'])
+def gerar_plano_recuperacao():
+    """Recebe as habilidades/descritores com baixo desempenho e pede à IA um plano de recuperação."""
+    try:
+        dados = request.get_json() or {}
+        itens_ruins = dados.get('itens_ruins', [])
+        tipo_analise = dados.get('tipo_analise', 'Descritor')
+        ano = dados.get('ano', 6)
+        componente = dados.get('componente', 'Matemática')
+        quantidade = dados.get('quantidade', 3) 
+
+        if not itens_ruins:
+            return jsonify({"sucesso": False, "erro": "Nenhum item com baixo desempenho informado."}), 400
+
+        lista_formatada = ", ".join(itens_ruins)
+        
+        prompt = (
+            f"Você é um especialista pedagógico em {componente} para o {ano}º ano do Ensino Fundamental.\n"
+            f"O professor aplicou uma prova e identificou que a turma teve desempenho CRÍTICO (menos de 50% de acerto) "
+            f"nos seguintes {tipo_analise}s: {lista_formatada}.\n\n"
+            f"Sua missão é criar um **PLANO DE RECUPERAÇÃO DIRIGIDA** prático e eficaz.\n"
+            f"Você deve gerar EXATAMENTE {quantidade} atividades de recuperação progressivas.\n\n"
+            f"Responda SOMENTE em formato JSON válido com a seguinte estrutura:\n"
+            f'{{"plano": "Um parágrafo curto explicando o foco da recuperação", '
+            f'"atividades": [{{"titulo": "Nome da atividade", "descricao": "Como o professor deve aplicar", "exemplo_pratico": "Um exemplo de exercício ou contexto do dia a dia"}}]}}'
+        )
+
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.7, "responseMimeType": "application/json"},
+        }
+
+        texto, modelo, chave = _gemini_chamar(payload)
+        
+        if texto is None:
+            return jsonify({"sucesso": False, "erro": f"Sem cota em todas as chaves: {chave}"}), 429
+
+        try:
+            texto_limpo = texto.replace("```json", "").replace("```", "").strip()
+            resposta_ia = jsonlib.loads(texto_limpo)
+        except Exception:
+            resposta_ia = {"plano": "Recuperação focada nos itens: " + lista_formatada, "atividades": [{"titulo": "Atividade Gerada", "descricao": texto, "exemplo_pratico": "-"}]}
+
+        print(f"🚀 [RECUPERAÇÃO] Plano de {quantidade} atividades gerado para {itens_ruins} com {modelo}")
+        
+        return jsonify({
+            "sucesso": True,
+            "plano": resposta_ia,
+            "modelo": modelo
+        })
 
     except Exception as e:
         import traceback
