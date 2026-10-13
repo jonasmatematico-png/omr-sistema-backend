@@ -1907,7 +1907,19 @@ def api_gerar_intervencao():
         erros_texto = "\n\n".join(lista_erros_texto)
         descritores_str = ", ".join(descritores_unicos) if descritores_unicos else "descritores não cadastrados"
 
+        # 🆕 BUSCAR MEMÓRIA DO ALUNO (Sistema de Personalização)
+        memoria_resp = supabase.table("memoria_alunos").select("*").eq("id_aluno", id_aluno).maybe_single().execute()
+        memoria = memoria_resp.data if memoria_resp.data else {
+            "estilo_aprendizagem": "não identificado",
+            "interesses": "",
+            "total_planos_gerados": 0,
+            "historico_erros": []
+        }
+        
+        print(f"🧠 [MEMÓRIA] Aluno {nome_aluno} | Estilo: {memoria.get('estilo_aprendizagem')} | Interesses: {memoria.get('interesses')}")
+
         # 4. PROMPT MESTRE REFORÇADO (personalização obrigatória)
+        # 4. PROMPT MESTRE REFORÇADO COM MEMÓRIA (personalização real)
         prompt_mestre = f"""
 Você é um Tutor Pedagógico Especialista em Educação Básica Brasileira (Currículo Paulista e SAEB).
 
@@ -1916,10 +1928,17 @@ DADOS DO ALUNO
 ═══════════════════════════════════════
 ALUNO: {nome_aluno}
 ANO ESCOLAR: {ano_serie}º ano do Ensino Fundamental
+
+🧠 MEMÓRIA PEDAGÓGICA DO ALUNO:
+- Estilo de aprendizagem: {memoria.get('estilo_aprendizagem', 'não identificado')}
+- Interesses pessoais: {memoria.get('interesses', 'não identificados')}
+- Total de planos já gerados: {memoria.get('total_planos_gerados', 0)}
+- Últimos erros registrados: {jsonlib.dumps(memoria.get('historico_erros', [])[-3:], ensure_ascii=False)}
+
 CONTEXTO EXTRA DO PROFESSOR: "{contexto_extra if contexto_extra else 'nenhum'}"
 
 ═══════════════════════════════════════
-ERROS ESPECÍFICOS DETECTADOS NESTA PROVA
+ERROS ESPECÍFICOS DESTA PROVA
 ═══════════════════════════════════════
 {erros_texto}
 
@@ -1928,28 +1947,28 @@ SUA TAREFA
 ═══════════════════════════════════════
 Crie EXATAMENTE 3 atividades de recuperação focadas NOS ERROS ESPECÍFICOS listados acima.
 
-⚠️ REGRAS OBRIGATÓRIAS DE PERSONALIZAÇÃO:
-1. O campo "foco_principal" DEVE mencionar os descritores/habilidades específicos que o aluno errou.
-2. CADA atividade DEVE trabalhar UM erro específico da lista acima.
-3. As atividades DEVEM ter conteúdo REAL relacionado às questões erradas (não podem ser genéricas).
-4. Se o aluno errou uma questão sobre frações, a atividade DEVE ser sobre frações similares.
-5. Se o enunciado original for fornecido, crie uma atividade PARALELA (mesmo tema, contexto diferente).
-6. Adapte a linguagem para um aluno do {ano_serie}º ano.
-7. Se houver contexto extra do professor, INCORPORE-o nas atividades.
+⚠️ REGRAS DE PERSONALIZAÇÃO (USE A MEMÓRIA!):
+1. Se o aluno tem INTERESSES identificados (futebol, música, games, etc), INCORPORE-OS no contexto das atividades
+2. Adapte ao ESTILO DE APRENDIZAGEM do aluno (visual = use descrições de imagens; auditivo = use diálogos; cinestésico = use atividades práticas)
+3. NÃO repita abordagens que já foram usadas antes (consulte o total de planos gerados)
+4. O campo "foco_principal" DEVE mencionar os descritores específicos que o aluno errou
+5. CADA atividade DEVE trabalhar UM erro específico da lista acima
+6. Adapte a linguagem para um aluno do {ano_serie}º ano
+7. Se houver contexto extra do professor, INCORPORE-o nas atividades
 
 ⚠️ REGRAS DE FORMATO:
-1. Responda APENAS com JSON válido.
-2. SEM markdown, SEM ```json, SEM texto antes ou depois.
-3. Comece diretamente com {{ e termine com }}.
+1. Responda APENAS com JSON válido
+2. SEM markdown, SEM ```json, SEM texto antes ou depois
+3. Comece diretamente com {{ e termine com }}
 
 FORMATO EXATO:
 {{
-"foco_principal": "Mencione aqui os descritores específicos que o aluno precisa recuperar (ex: D25 - Interpretação de texto)",
+"foco_principal": "Mencione os descritores específicos e como as atividades se conectam aos interesses do aluno",
 "atividades": [
     {{
-    "titulo": "Nome criativo relacionado ao erro específico",
+    "titulo": "Nome criativo (use interesse do aluno se possível)",
     "tipo": "objetiva",
-    "enunciado": "Atividade completa, pronta para o aluno resolver, baseada no erro específico",
+    "enunciado": "Atividade completa personalizada baseada no erro específico",
     "gabarito_explicado": "Resolução passo a passo para o professor"
     }},
     {{
@@ -2054,6 +2073,24 @@ COMECE DIRETAMENTE COM {{ E TERMINE COM }}. NADA MAIS.
                 },
                 "modelo": modelo_usado + " (fallback)"
             })
+
+        # 🆕 ATUALIZAR MEMÓRIA DO ALUNO
+            erros_para_memoria = [{"data": datetime.now().isoformat(), "descritores": list(descritores_unicos)}]
+            try:
+                import requests
+                requests.post(
+                    f"{os.environ.get('API_URL', 'http://localhost:10000')}/api/atualizar-memoria",
+                    json={
+                        "id_aluno": id_aluno,
+                        "id_avaliacao": id_avaliacao,
+                        "tipo": "plano",
+                        "contexto_extra": contexto_extra,
+                        "erros": erros_para_memoria
+                    },
+                    timeout=5
+                )
+            except Exception as e:
+                print(f"⚠️ Aviso: não foi possível atualizar memória: {e}")
 
     except Exception as e:
         import traceback
@@ -2261,6 +2298,177 @@ def gerar_plano_recuperacao():
     except Exception as e:
         import traceback
         traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+        # ============================================
+# 🧠 SISTEMA DE MEMÓRIA DO ALUNO (NOVO!)
+# ============================================
+
+def analisar_estilo_aprendizagem(respostas_aluno):
+    """
+    Analisa o padrão de respostas para inferir estilo de aprendizagem
+    Retorna: 'visual', 'auditivo', 'cinestésico' ou 'misto'
+    """
+    # Lógica simplificada por enquanto
+    # No futuro, podemos usar IA para analisar padrões mais complexos
+    total = len(respostas_aluno)
+    if total == 0:
+        return 'não identificado'
+    
+    # Por enquanto, retorna 'misto' como padrão
+    # Depois podemos implementar análise de:
+    # - Tempo de resposta
+    # - Tipo de questão que acerta mais
+    # - Padrões de erro
+    return 'misto'
+
+def extrair_interesses(contexto_extra):
+    """
+    Extrai interesses do aluno a partir do contexto extra fornecido pelo professor
+    """
+    if not contexto_extra:
+        return ''
+    
+    # Lista de palavras-chave comuns
+    keywords = ['futebol', 'música', 'games', 'videogame', 'esporte', 'dança', 
+                'arte', 'ciência', 'tecnologia', 'animais', 'natureza']
+    
+    interesses_encontrados = []
+    contexto_lower = contexto_extra.lower()
+    
+    for keyword in keywords:
+        if keyword in contexto_lower:
+            interesses_encontrados.append(keyword)
+    
+    return ', '.join(interesses_encontrados) if interesses_encontrados else contexto_extra
+
+@app.route('/api/atualizar-memoria', methods=['POST'])
+def atualizar_memoria_aluno():
+    """
+    Atualiza a memória pedagógica do aluno com novos dados
+    Chamado automaticamente após gerar plano, exercício ou correção
+    """
+    try:
+        dados = request.get_json() or {}
+        
+        id_aluno = dados.get('id_aluno')
+        id_avaliacao = dados.get('id_avaliacao')
+        tipo_evento = dados.get('tipo', 'geral')  # 'plano', 'exercicio', 'correcao'
+        contexto_extra = dados.get('contexto_extra', '')
+        erros_detectados = dados.get('erros', [])
+        
+        if not id_aluno:
+            return jsonify({"sucesso": False, "erro": "ID do aluno obrigatório"}), 400
+        
+        # Busca memória existente ou cria nova
+        memoria = supabase.table("memoria_alunos").select("*").eq("id_aluno", id_aluno).execute()
+        
+        if not memoria.data:
+            # Criar nova memória
+            nova_memoria = {
+                "id_aluno": id_aluno,
+                "estilo_aprendizagem": "não identificado",
+                "interesses": extrair_interesses(contexto_extra),
+                "total_planos_gerados": 1 if tipo_evento == 'plano' else 0,
+                "historico_erros": erros_detectados,
+                "historico_planos": [{
+                    "data": datetime.now().isoformat(),
+                    "tipo": tipo_evento,
+                    "id_avaliacao": id_avaliacao
+                }] if tipo_evento == 'plano' else []
+            }
+            
+            result = supabase.table("memoria_alunos").insert(nova_memoria).execute()
+            print(f"✅ [MEMÓRIA] Nova memória criada para aluno {id_aluno}")
+            
+        else:
+            # Atualizar memória existente
+            memoria_atual = memoria.data[0]
+            
+            # Atualizar contadores
+            novo_total_planos = memoria_atual['total_planos_gerados']
+            if tipo_evento == 'plano':
+                novo_total_planos += 1
+            
+            # Atualizar histórico de erros (manter últimos 20)
+            historico_erros = memoria_atual.get('historico_erros', [])
+            if erros_detectados:
+                historico_erros.extend(erros_detectados)
+                historico_erros = historico_erros[-20:]  # Manter só os últimos 20
+            
+            # Atualizar histórico de planos (manter últimos 10)
+            historico_planos = memoria_atual.get('historico_planos', [])
+            if tipo_evento == 'plano':
+                historico_planos.append({
+                    "data": datetime.now().isoformat(),
+                    "tipo": tipo_evento,
+                    "id_avaliacao": id_avaliacao
+                })
+                historico_planos = historico_planos[-10:]  # Manter só os últimos 10
+            
+            # Atualizar interesses se houver contexto novo
+            novos_interesses = memoria_atual.get('interesses', '')
+            if contexto_extra:
+                interesses_extraidos = extrair_interesses(contexto_extra)
+                if interesses_extraidos:
+                    todos_interesses = set(novos_interesses.split(', ')) if novos_interesses else set()
+                    todos_interesses.update(interesses_extraidos.split(', '))
+                    novos_interesses = ', '.join(todos_interesses)
+            
+            # Atualizar no banco
+            update_data = {
+                "total_planos_gerados": novo_total_planos,
+                "historico_erros": historico_erros,
+                "historico_planos": historico_planos,
+                "interesses": novos_interesses
+            }
+            
+            result = supabase.table("memoria_alunos").update(update_data).eq("id_aluno", id_aluno).execute()
+            print(f"✅ [MEMÓRIA] Memória atualizada para aluno {id_aluno}")
+        
+        return jsonify({
+            "sucesso": True,
+            "mensagem": "Memória atualizada com sucesso"
+        })
+        
+    except Exception as e:
+        print(f"❌ Erro ao atualizar memória: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+
+@app.route('/api/obter-memoria/<int:id_aluno>', methods=['GET'])
+def obter_memoria_aluno(id_aluno):
+    """
+    Retorna a memória pedagógica completa do aluno
+    Usado para personalizar planos e intervenções
+    """
+    try:
+        memoria = supabase.table("memoria_alunos").select("*").eq("id_aluno", id_aluno).execute()
+        
+        if not memoria.data:
+            # Retornar memória vazia (não é erro, é aluno novo)
+            return jsonify({
+                "sucesso": True,
+                "memoria": {
+                    "id_aluno": id_aluno,
+                    "estilo_aprendizagem": "não identificado",
+                    "interesses": "",
+                    "pontos_fortes": [],
+                    "total_planos_gerados": 0,
+                    "historico_erros": [],
+                    "historico_planos": []
+                }
+            })
+        
+        return jsonify({
+            "sucesso": True,
+            "memoria": memoria.data[0]
+        })
+        
+    except Exception as e:
+        print(f"❌ Erro ao obter memória: {e}")
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 # ==========================================================
