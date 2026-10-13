@@ -1805,6 +1805,179 @@ def gerar_plano_aula():
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
+        # ==========================================================
+# 🤖 NOVA: GERAÇÃO DE PLANO DE INTERVENÇÃO INDIVIDUALIZADO
+# ==========================================================
+
+@app.route('/api/gerar_intervencao_individual', methods=['POST'])
+def api_gerar_intervencao():
+    """
+    Recebe: { id_aluno (int), id_avaliacao (int), contexto_extra (str) }
+    Gera plano personalizado baseado nos erros recentes.
+    """
+    try:
+        dados = request.get_json() or {}
+        id_aluno = dados.get('id_aluno')
+        id_avaliacao = dados.get('id_avaliacao')
+        contexto_extra = dados.get('contexto_extra', '')
+        
+        # Validação básica
+        if not id_aluno or not id_avaliacao:
+            return jsonify({"sucesso": False, "erro": "ID do Aluno e Prova são obrigatórios."}), 400
+
+        # Converter para inteiro se vier como string do JS
+        try:
+            id_aluno = int(id_aluno)
+            id_avaliacao = int(id_avaliacao)
+        except ValueError:
+             return jsonify({"sucesso": False, "erro": "IDs inválidos (devem ser números)."}), 400
+
+        # 1. BUSCAR DADOS DO ALUNO
+        r_aluno = supabase.table("alunos").select("nome_completo, numero_chamada").eq("id", id_aluno).maybe_single().execute()
+        if not r_aluno.data:
+             return jsonify({"sucesso": False, "erro": "Aluno não encontrado."}), 404
+        
+        nome_aluno = r_aluno.data.get('nome_completo', 'Aluno Desconhecido')
+
+        # 2. BUSCAR ERROS EM QUESTÕES OBJETIVAS
+        # Filtra respostas incorretas desta prova
+        r_obj = supabase.table("respostas") \
+            .select("id_questao, correta") \
+            .eq("id_aluno", id_aluno) \
+            .eq("id_avaliacao", id_avaliacao) \
+            .eq("correta", False) \
+            .limit(5) \
+            .execute()
+        
+        lista_erros_texto = []
+        
+        if r_obj.data:
+            for q in r_obj.data:
+                # Busca detalhe da questão para saber o descritor/habilidade
+                det_q = supabase.table("questoes") \
+                    .select("descritor, habilidade, enunciado") \
+                    .eq("id", q['id_questao']) \
+                    .maybe_single().execute()
+                
+                if det_q.data:
+                    desc = det_q.data.get('descritor') or det_q.data.get('habilidade') or "Conteúdo Geral"
+                    # Trunca o enunciado para não ficar gigante no prompt
+                    enun_short = (det_q.data.get('enunciado') or "")[:50] + "..."
+                    lista_erros_texto.append(f"- Objetiva Q{q['id_questao']} ({desc}): Enunciado parcial: '{enun_short}'")
+
+        # 3. BUSCAR ERROS EM QUESTÕES DISSERTATIVAS
+        r_dis = supabase.table("correcoes_dissertativas_detalhadas") \
+            .select("numero_questao, justificativa, nota_final, valor_questao") \
+            .eq("id_aluno", id_aluno) \
+            .eq("id_avaliacao", id_avaliacao) \
+            .lt("nota_final", 5.0) \
+            .limit(3) \
+            .execute()
+
+        if r_dis.data:
+            for d in r_dis.data:
+                just_short = (d.get('justificativa') or "Sem justificativa")[:80] + "..."
+                lista_erros_texto.append(f"- Dissertativa Q{d['numero_questao']}: Nota {d['nota_final']}/{d['valor_questao']}. Motivo IA: '{just_short}'")
+
+        if not lista_erros_texto:
+             return jsonify({
+                 "sucesso": True, 
+                 "dados": {
+                     "foco_principal": "Nenhum erro crítico recente detectado.",
+                     "atividades": [{
+                         "titulo": "Revisão Livre",
+                         "tipo": "reflexiva",
+                         "enunciado": "O aluno está indo bem! Proponha um desafio extra ou peça para ele explicar um conceito difícil para um colega.",
+                         "gabarito_explicado": "Atividade de consolidação."
+                     }]
+                 },
+                 "modelo": "fallback"
+             })
+
+        erros_texto = "\n".join(lista_erros_texto)
+
+        # 4. PREPARAR PROMPT MESTRE PARA A IA
+        prompt_mestre = f"""
+Você é um Tutor Pedagógico Especialista em Educação Básica Brasileira.
+Seu objetivo é criar atividades curtas, engajadoras e eficazes para remediar deficiências específicas identificadas.
+
+ALUNO: {nome_aluno}
+CONTEXTO EXTRA DO PROFESSOR: "{contexto_extra}" 
+(IMPORTANTE: Se houver contexto extra, use-o para adaptar os temas das atividades. Ex: se disser "gosta de futebol", use exemplos de futebol).
+
+DIAGNÓSTICO DE ERROS NA ÚLTIMA AVALIAÇÃO:
+{erros_texto}
+
+TAREFA:
+Gere EXATAMENTE 3 atividades rápidas (máx 10 min cada) focadas APENAS nos pontos fracos acima.
+As atividades devem ser diversificadas:
+1. Uma objetiva ou de múltipla escolha rápida.
+2. Uma prática/desafiadora (resolver problema real).
+3. Uma reflexiva/explicativa (pedir para o aluno explicar o raciocínio).
+
+FORMATO DE RESPOSTA (JSON ESTRITO - SEM TEXTO ADICIONAL):
+{{
+  "foco_principal": "Resuma em 1 frase qual é a maior dificuldade detectada",
+  "atividades": [
+    {{
+      "titulo": "Nome Criativo da Atividade",
+      "tipo": "objetiva|pratica|reflexiva",
+      "enunciado": "Texto completo da atividade para o aluno ler/fazer",
+      "gabarito_explicado": "Explicação passo a passo da resposta correta para o professor usar na correção"
+    }}
+  ]
+}}
+"""
+
+        payload = {
+            "contents": [{"parts": [{"text": prompt_mestre}]}],
+            "generationConfig": {"temperature": 0.7, "responseMimeType": "application/json"},
+        }
+
+        # 5. CHAMAR GEMINI
+        texto_resp, modelo_usado, chave_usada = _gemini_chamar(payload)
+        
+        if texto_resp is None:
+             return jsonify({"sucesso": False, "erro": "Falha na comunicação com a IA (cota ou rede). Tente novamente."}), 500
+
+        # 6. VALIDAR E SALVAR NO BANCO
+        try:
+            # Limpa markdown se houver
+            clean_json = texto_resp.replace("```json", "").replace("```", "").strip()
+            data_plan = jsonlib.loads(clean_json)
+            
+            # Insere na tabela nova
+            # Nota: id_professor pode ser null se não tivermos o token aqui, mas vamos tentar pegar do header se possível
+            # Por enquanto, deixamos null ou buscamos via email se necessário. Para MVP, null é aceitável.
+            
+            insert_res = supabase.table("intervencoes_geradas").insert({
+                "id_aluno": id_aluno,
+                "id_professor": None, # TODO: Implementar captura de UID do admin/professor logado
+                "id_avaliacao": id_avaliacao,
+                "foco_principal": data_plan.get("foco_principal"),
+                "contexto_extra": contexto_extra,
+                "conteudo_json": data_plan,
+                "status": "pendente"
+            }).execute()
+            
+            print(f"✅ [INTERVENÇÃO] Plano gerado e salvo para {nome_aluno}")
+
+            return jsonify({
+                "sucesso": True,
+                "dados": data_plan,
+                "modelo": modelo_usado
+            })
+
+        except Exception as parse_err:
+            print(f"❌ Erro ao processar JSON da IA: {parse_err}")
+            print(f"Texto bruto da IA: {texto_resp[:200]}") # Loga parte do texto para debug
+            return jsonify({"sucesso": False, "erro": "A IA retornou formato inválido. Tente novamente."}), 500
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
 # ==========================================================
 # 🏁 INICIALIZAÇÃO DO SERVIDOR
 # ==========================================================
