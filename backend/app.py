@@ -2084,23 +2084,80 @@ COMECE DIRETAMENTE COM {{ E TERMINE COM }}. NADA MAIS.
                 "modelo": modelo_usado + " (fallback)"
             })
 
-        # 🆕 ATUALIZAR MEMÓRIA DO ALUNO
-            erros_para_memoria = [{"data": datetime.now().isoformat(), "descritores": list(descritores_unicos)}]
+        # 🆕 ATUALIZAR MEMÓRIA DO ALUNO (Chamada Direta - 100% Confiável)
             try:
-                import requests
-                requests.post(
-                    f"{os.environ.get('API_URL', 'http://localhost:10000')}/api/atualizar-memoria",
-                    json={
-                        "id_aluno": id_aluno,
+                erros_para_memoria = [{
+                    "data": datetime.now().isoformat(),
+                    "descritores": list(descritores_unicos),
+                    "id_avaliacao": id_avaliacao
+                }]
+                
+                # Busca memória existente
+                mem_check = supabase.table("memoria_alunos").select("id, total_planos_gerados, historico_erros, historico_planos, interesses").eq("id_aluno", id_aluno).maybe_single().execute()
+                
+                if mem_check.data:
+                    # ATUALIZAR memória existente
+                    mem_atual = mem_check.data
+                    
+                    # Atualiza histórico de erros (mantém últimos 20)
+                    hist_erros = mem_atual.get('historico_erros') or []
+                    hist_erros.extend(erros_para_memoria)
+                    hist_erros = hist_erros[-20:]
+                    
+                    # Atualiza histórico de planos (mantém últimos 10)
+                    hist_planos = mem_atual.get('historico_planos') or []
+                    hist_planos.append({
+                        "data": datetime.now().isoformat(),
+                        "tipo": "plano_intervencao",
                         "id_avaliacao": id_avaliacao,
-                        "tipo": "plano",
-                        "contexto_extra": contexto_extra,
-                        "erros": erros_para_memoria
-                    },
-                    timeout=5
-                )
-            except Exception as e:
-                print(f"⚠️ Aviso: não foi possível atualizar memória: {e}")
+                        "foco": data_plan.get("foco_principal", "")[:100]
+                    })
+                    hist_planos = hist_planos[-10:]
+                    
+                    # Atualiza interesses se houver contexto novo
+                    novos_interesses = mem_atual.get('interesses') or ''
+                    if contexto_extra:
+                        interesses_novos = extrair_interesses(contexto_extra)
+                        if interesses_novos:
+                            todos = set(novos_interesses.split(', ')) if novos_interesses else set()
+                            todos.update(interesses_novos.split(', '))
+                            todos.discard('')
+                            novos_interesses = ', '.join(todos)
+                    
+                    update_payload = {
+                        "total_planos_gerados": (mem_atual.get('total_planos_gerados') or 0) + 1,
+                        "historico_erros": hist_erros,
+                        "historico_planos": hist_planos,
+                        "interesses": novos_interesses
+                    }
+                    
+                    supabase.table("memoria_alunos").update(update_payload).eq("id_aluno", id_aluno).execute()
+                    print(f"✅ [MEMÓRIA] Atualizada para aluno {id_aluno} (total planos: {update_payload['total_planos_gerados']})")
+                    
+                else:
+                    # CRIAR nova memória
+                    nova_memoria = {
+                        "id_aluno": id_aluno,
+                        "estilo_aprendizagem": "não identificado",
+                        "interesses": extrair_interesses(contexto_extra),
+                        "total_planos_gerados": 1,
+                        "historico_erros": erros_para_memoria,
+                        "historico_planos": [{
+                            "data": datetime.now().isoformat(),
+                            "tipo": "plano_intervencao",
+                            "id_avaliacao": id_avaliacao,
+                            "foco": data_plan.get("foco_principal", "")[:100]
+                        }]
+                    }
+                    
+                    supabase.table("memoria_alunos").insert(nova_memoria).execute()
+                    print(f"✅ [MEMÓRIA] Criada para aluno {id_aluno} (primeiro plano)")
+                    
+            except Exception as e_mem:
+                import traceback
+                print(f"❌ [MEMÓRIA] Erro ao salvar: {e_mem}")
+                traceback.print_exc()
+                # Não interrompe o fluxo principal - o plano já foi gerado
 
     except Exception as e:
         import traceback
