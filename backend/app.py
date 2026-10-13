@@ -1907,18 +1907,28 @@ def api_gerar_intervencao():
         erros_texto = "\n\n".join(lista_erros_texto)
         descritores_str = ", ".join(descritores_unicos) if descritores_unicos else "descritores não cadastrados"
 
-        # 🆕 BUSCAR MEMÓRIA DO ALUNO (Sistema de Personalização)
-        memoria_resp = supabase.table("memoria_alunos").select("*").eq("id_aluno", id_aluno).maybe_single().execute()
-        memoria = memoria_resp.data if memoria_resp.data else {
+        # 🆕 BUSCAR MEMÓRIA DO ALUNO (Versão Blindada - nunca dá erro)
+        memoria = {
             "estilo_aprendizagem": "não identificado",
             "interesses": "",
             "total_planos_gerados": 0,
             "historico_erros": []
         }
         
-        print(f"🧠 [MEMÓRIA] Aluno {nome_aluno} | Estilo: {memoria.get('estilo_aprendizagem')} | Interesses: {memoria.get('interesses')}")
+        try:
+            memoria_resp = supabase.table("memoria_alunos").select("*").eq("id_aluno", id_aluno).maybe_single().execute()
+            
+            if memoria_resp is not None and memoria_resp.data is not None:
+                memoria = memoria_resp.data
+                print(f"🧠 [MEMÓRIA] Encontrada para aluno {nome_aluno}")
+            else:
+                print(f"🧠 [MEMÓRIA] Aluno {nome_aluno} ainda não tem memória (primeiro plano)")
+                
+        except Exception as e_memoria:
+            print(f"⚠️ [MEMÓRIA] Erro ao buscar (continuando sem memória): {e_memoria}")
+        
+        print(f"🧠 [MEMÓRIA] Estilo: {memoria.get('estilo_aprendizagem')} | Interesses: {memoria.get('interesses')}")
 
-        # 4. PROMPT MESTRE REFORÇADO (personalização obrigatória)
         # 4. PROMPT MESTRE REFORÇADO COM MEMÓRIA (personalização real)
         prompt_mestre = f"""
 Você é um Tutor Pedagógico Especialista em Educação Básica Brasileira (Currículo Paulista e SAEB).
