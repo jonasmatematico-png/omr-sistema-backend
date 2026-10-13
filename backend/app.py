@@ -165,6 +165,40 @@ GEMINI_MODELOS = [m.strip() for m in os.environ.get(
     "gemini-3.6-flash,gemini-3.5-flash-lite,gemini-2.0-flash,gemini-2.0-flash-lite"
 ).split(",") if m.strip()]
 
+# ============================================
+# 🧠 FUNÇÕES AUXILIARES DO SISTEMA DE MEMÓRIA
+# ============================================
+
+def analisar_estilo_aprendizagem(respostas_aluno):
+    """
+    Analisa o padrão de respostas para inferir estilo de aprendizagem
+    Retorna: 'visual', 'auditivo', 'cinestésico' ou 'misto'
+    """
+    total = len(respostas_aluno) if respostas_aluno else 0
+    if total == 0:
+        return 'não identificado'
+    return 'misto'  # Por enquanto, retorna misto como padrão
+
+
+def extrair_interesses(contexto_extra):
+    """
+    Extrai interesses do aluno a partir do contexto extra fornecido pelo professor
+    """
+    if not contexto_extra:
+        return ''
+    
+    keywords = ['futebol', 'música', 'games', 'videogame', 'esporte', 'dança', 
+                'arte', 'ciência', 'tecnologia', 'animais', 'natureza']
+    
+    interesses_encontrados = []
+    contexto_lower = contexto_extra.lower()
+    
+    for keyword in keywords:
+        if keyword in contexto_lower:
+            interesses_encontrados.append(keyword)
+    
+    return ', '.join(interesses_encontrados) if interesses_encontrados else contexto_extra
+
 # ==========================================================
 # 🚨 CARREGAMENTO E REGISTRO DO BLUEPRINT DE CORREÇÃO
 # ==========================================================
@@ -2045,6 +2079,98 @@ COMECE DIRETAMENTE COM {{ E TERMINE COM }}. NADA MAIS.
             
             print(f"✅ [INTERVENÇÃO] Plano gerado e salvo para {nome_aluno}")
 
+            # ============================================
+            # 🆕 ATUALIZAR MEMÓRIA DO ALUNO (ANTES do return!)
+            # ============================================
+            try:
+                print(f"🎯 [MEMÓRIA] Iniciando salvamento para aluno {id_aluno}...")
+                
+                erros_para_memoria = [{
+                    "data": datetime.now().isoformat(),
+                    "descritores": list(descritores_unicos),
+                    "id_avaliacao": id_avaliacao
+                }]
+                
+                # Busca memória existente
+                mem_check = supabase.table("memoria_alunos") \
+                    .select("id, total_planos_gerados, historico_erros, historico_planos, interesses") \
+                    .eq("id_aluno", id_aluno) \
+                    .maybe_single().execute()
+                
+                if mem_check.data:
+                    # ATUALIZAR memória existente
+                    mem_atual = mem_check.data
+                    
+                    hist_erros = mem_atual.get('historico_erros') or []
+                    hist_erros.extend(erros_para_memoria)
+                    hist_erros = hist_erros[-20:]
+                    
+                    hist_planos = mem_atual.get('historico_planos') or []
+                    hist_planos.append({
+                        "data": datetime.now().isoformat(),
+                        "tipo": "plano_intervencao",
+                        "id_avaliacao": id_avaliacao,
+                        "foco": data_plan.get("foco_principal", "")[:100]
+                    })
+                    hist_planos = hist_planos[-10:]
+                    
+                    novos_interesses = mem_atual.get('interesses') or ''
+                    if contexto_extra:
+                        try:
+                            interesses_novos = extrair_interesses(contexto_extra)
+                            if interesses_novos:
+                                todos = set(novos_interesses.split(', ')) if novos_interesses else set()
+                                todos.update(interesses_novos.split(', '))
+                                todos.discard('')
+                                novos_interesses = ', '.join(todos)
+                        except NameError:
+                            novos_interesses = contexto_extra
+                    
+                    update_payload = {
+                        "total_planos_gerados": (mem_atual.get('total_planos_gerados') or 0) + 1,
+                        "historico_erros": hist_erros,
+                        "historico_planos": hist_planos,
+                        "interesses": novos_interesses
+                    }
+                    
+                    supabase.table("memoria_alunos").update(update_payload).eq("id_aluno", id_aluno).execute()
+                    print(f"✅ [MEMÓRIA] ATUALIZADA para aluno {id_aluno} (total planos: {update_payload['total_planos_gerados']})")
+                    
+                else:
+                    # CRIAR nova memória
+                    interesses_iniciais = ''
+                    if contexto_extra:
+                        try:
+                            interesses_iniciais = extrair_interesses(contexto_extra)
+                        except NameError:
+                            interesses_iniciais = contexto_extra
+                    
+                    nova_memoria = {
+                        "id_aluno": id_aluno,
+                        "estilo_aprendizagem": "não identificado",
+                        "interesses": interesses_iniciais,
+                        "total_planos_gerados": 1,
+                        "historico_erros": erros_para_memoria,
+                        "historico_planos": [{
+                            "data": datetime.now().isoformat(),
+                            "tipo": "plano_intervencao",
+                            "id_avaliacao": id_avaliacao,
+                            "foco": data_plan.get("foco_principal", "")[:100]
+                        }]
+                    }
+                    
+                    supabase.table("memoria_alunos").insert(nova_memoria).execute()
+                    print(f"✅ [MEMÓRIA] CRIADA para aluno {id_aluno} (primeiro plano)")
+                    
+            except Exception as e_mem:
+                import traceback
+                print(f"❌ [MEMÓRIA] Erro ao salvar: {e_mem}")
+                traceback.print_exc()
+                # Não interrompe - o plano já foi gerado com sucesso
+
+            # ============================================
+            # 🎯 RETORNO FINAL (AGORA SIM, DEPOIS DA MEMÓRIA!)
+            # ============================================
             return jsonify({
                 "sucesso": True,
                 "dados": data_plan,
@@ -2367,35 +2493,6 @@ def gerar_plano_recuperacao():
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
-        # ============================================
-# 🧠 SISTEMA DE MEMÓRIA DO ALUNO (NOVO!)
-# ============================================
-
-def analisar_estilo_aprendizagem(respostas_aluno):
-    """
-    Analisa o padrão de respostas para inferir estilo de aprendizagem
-    Retorna: 'visual', 'auditivo', 'cinestésico' ou 'misto'
-    """
-    # Lógica simplificada por enquanto
-    # No futuro, podemos usar IA para analisar padrões mais complexos
-    total = len(respostas_aluno)
-    if total == 0:
-        return 'não identificado'
-    
-    # Por enquanto, retorna 'misto' como padrão
-    # Depois podemos implementar análise de:
-    # - Tempo de resposta
-    # - Tipo de questão que acerta mais
-    # - Padrões de erro
-    return 'misto'
-
-def extrair_interesses(contexto_extra):
-    """
-    Extrai interesses do aluno a partir do contexto extra fornecido pelo professor
-    """
-    if not contexto_extra:
-        return ''
-    
     # Lista de palavras-chave comuns
     keywords = ['futebol', 'música', 'games', 'videogame', 'esporte', 'dança', 
                 'arte', 'ciência', 'tecnologia', 'animais', 'natureza']
