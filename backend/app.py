@@ -1798,18 +1798,29 @@ def api_gerar_intervencao():
             id_aluno = int(id_aluno)
             id_avaliacao = int(id_avaliacao)
         except ValueError:
-             return jsonify({"sucesso": False, "erro": "IDs inválidos (devem ser números)."}), 400
+            return jsonify({"sucesso": False, "erro": "IDs inválidos (devem ser números)."}), 400
 
         # 1. BUSCAR DADOS DO ALUNO
-        r_aluno = supabase.table("alunos").select("nome_completo, numero_chamada").eq("id", id_aluno).maybe_single().execute()
+        r_aluno = supabase.table("alunos").select("nome_completo, numero_chamada, id_turma").eq("id", id_aluno).maybe_single().execute()
         if not r_aluno.data:
-             return jsonify({"sucesso": False, "erro": "Aluno não encontrado."}), 404
+            return jsonify({"sucesso": False, "erro": "Aluno não encontrado."}), 404
         
         nome_aluno = r_aluno.data.get('nome_completo', 'Aluno Desconhecido')
+        id_turma = r_aluno.data.get('id_turma')
 
-        # 2. BUSCAR ERROS EM QUESTÕES OBJETIVAS
+        # Busca o ano da turma para calibrar a dificuldade
+        ano_serie = 6  # padrão
+        if id_turma:
+            r_turma = supabase.table("turmas").select("nome").eq("id", id_turma).maybe_single().execute()
+            if r_turma.data:
+                import re
+                m = re.search(r'(\d)', r_turma.data.get('nome', ''))
+                if m:
+                    ano_serie = int(m.group(1))
+
+        # 2. BUSCAR ERROS EM QUESTÕES OBJETIVAS (com MAIS detalhes)
         r_obj = supabase.table("respostas") \
-            .select("id_questao, correta") \
+            .select("id_questao, correta, resposta_aluno") \
             .eq("id_aluno", id_aluno) \
             .eq("id_avaliacao", id_avaliacao) \
             .eq("correta", False) \
@@ -1817,22 +1828,42 @@ def api_gerar_intervencao():
             .execute()
         
         lista_erros_texto = []
+        descritores_unicos = set()  # 🆕 Para saber quais habilidades estão fracas
         
         if r_obj.data:
             for q in r_obj.data:
                 det_q = supabase.table("questoes") \
-                    .select("descritor, habilidade, enunciado") \
+                    .select("numero, descritor, habilidade, enunciado, gabarito, valor") \
                     .eq("id", q['id_questao']) \
                     .maybe_single().execute()
                 
                 if det_q.data:
-                    desc = det_q.data.get('descritor') or det_q.data.get('habilidade') or "Conteúdo Geral"
-                    enun_short = (det_q.data.get('enunciado') or "")[:50] + "..."
-                    lista_erros_texto.append(f"- Objetiva Q{q['id_questao']} ({desc}): Enunciado parcial: '{enun_short}'")
+                    desc = det_q.data.get('descritor') or det_q.data.get('habilidade') or ""
+                    enunciado_completo = det_q.data.get('enunciado') or ""
+                    gabarito = det_q.data.get('gabarito') or ""
+                    resposta_aluno = q.get('resposta_aluno') or "não respondeu"
+                    
+                    # 🆕 Registra o descritor único para análise
+                    if desc:
+                        descritores_unicos.add(desc)
+                    
+                    # 🆕 Mensagem RICA para a IA
+                    if desc:
+                        lista_erros_texto.append(
+                            f"- QUESTÃO OBJETIVA {det_q.data.get('numero')} | Descritor/Habilidade: {desc}\n"
+                            f"  Enunciado completo: \"{enunciado_completo[:200]}\"\n"
+                            f"  Resposta do aluno: \"{resposta_aluno}\" | Gabarito correto: \"{gabarito}\""
+                        )
+                    else:
+                        lista_erros_texto.append(
+                            f"- QUESTÃO OBJETIVA {det_q.data.get('numero')} (sem descritor cadastrado)\n"
+                            f"  Enunciado: \"{enunciado_completo[:200]}\"\n"
+                            f"  Resposta do aluno: \"{resposta_aluno}\" | Gabarito: \"{gabarito}\""
+                        )
 
-        # 3. BUSCAR ERROS EM QUESTÕES DISSERTATIVAS
+        # 3. BUSCAR ERROS EM QUESTÕES DISSERTATIVAS (com MAIS detalhes)
         r_dis = supabase.table("correcoes_dissertativas_detalhadas") \
-            .select("numero_questao, justificativa, nota_final, valor_questao") \
+            .select("numero_questao, enunciado, justificativa, nota_final, valor_questao, transcricao") \
             .eq("id_aluno", id_aluno) \
             .eq("id_avaliacao", id_avaliacao) \
             .lt("nota_final", 5.0) \
@@ -1841,67 +1872,99 @@ def api_gerar_intervencao():
 
         if r_dis.data:
             for d in r_dis.data:
-                just_short = (d.get('justificativa') or "Sem justificativa")[:80] + "..."
-                lista_erros_texto.append(f"- Dissertativa Q{d['numero_questao']}: Nota {d['nota_final']}/{d['valor_questao']}. Motivo IA: '{just_short}'")
+                just_short = (d.get('justificativa') or "Sem justificativa")[:150]
+                transcricao = (d.get('transcricao') or "")[:150]
+                enunciado_dis = (d.get('enunciado') or "")[:200]
+                
+                lista_erros_texto.append(
+                    f"- QUESTÃO DISSERTATIVA {d['numero_questao']} | Nota: {d['nota_final']}/{d['valor_questao']}\n"
+                    f"  Enunciado: \"{enunciado_dis}\"\n"
+                    f"  O que o aluno escreveu: \"{transcricao}\"\n"
+                    f"  Motivo da nota baixa: \"{just_short}\""
+                )
+
+        # 🆕 LOG CRÍTICO PARA DEBUG (veja isso nos logs do Render!)
+        print(f"🔍 [INTERVENÇÃO] Aluno: {nome_aluno} | Ano: {ano_serie}º")
+        print(f"🔍 [INTERVENÇÃO] Descritores fracos detectados: {list(descritores_unicos)}")
+        print(f"🔍 [INTERVENÇÃO] Total de erros encontrados: {len(lista_erros_texto)}")
+        print(f"🔍 [INTERVENÇÃO] Detalhes dos erros:\n{chr(10).join(lista_erros_texto)[:1000]}")
 
         if not lista_erros_texto:
-             return jsonify({
-                 "sucesso": True, 
-                 "dados": {
-                     "foco_principal": "Nenhum erro crítico recente detectado.",
-                     "atividades": [{
-                         "titulo": "Revisão Livre",
-                         "tipo": "reflexiva",
-                         "enunciado": "O aluno está indo bem! Proponha um desafio extra ou peça para ele explicar um conceito difícil para um colega.",
-                         "gabarito_explicado": "Atividade de consolidação."
-                     }]
-                 },
-                 "modelo": "fallback"
-             })
+            return jsonify({
+                "sucesso": True, 
+                "dados": {
+                    "foco_principal": "Nenhum erro crítico recente detectado.",
+                    "atividades": [{
+                        "titulo": "Revisão Livre",
+                        "tipo": "reflexiva",
+                        "enunciado": "O aluno está indo bem! Proponha um desafio extra ou peça para ele explicar um conceito difícil para um colega.",
+                        "gabarito_explicado": "Atividade de consolidação."
+                    }]
+                },
+                "modelo": "fallback"
+            })
 
-        erros_texto = "\n".join(lista_erros_texto)
+        erros_texto = "\n\n".join(lista_erros_texto)
+        descritores_str = ", ".join(descritores_unicos) if descritores_unicos else "descritores não cadastrados"
 
-        # 4. PROMPT MESTRE (REFORÇADO para garantir JSON puro)
+        # 4. PROMPT MESTRE REFORÇADO (personalização obrigatória)
         prompt_mestre = f"""
-Você é um Tutor Pedagógico Especialista em Educação Básica Brasileira.
+Você é um Tutor Pedagógico Especialista em Educação Básica Brasileira (Currículo Paulista e SAEB).
 
+═══════════════════════════════════════
+DADOS DO ALUNO
+═══════════════════════════════════════
 ALUNO: {nome_aluno}
-CONTEXTO EXTRA DO PROFESSOR: "{contexto_extra}" 
+ANO ESCOLAR: {ano_serie}º ano do Ensino Fundamental
+CONTEXTO EXTRA DO PROFESSOR: "{contexto_extra if contexto_extra else 'nenhum'}"
 
-DIAGNÓSTICO DE ERROS NA ÚLTIMA AVALIAÇÃO:
+═══════════════════════════════════════
+ERROS ESPECÍFICOS DETECTADOS NESTA PROVA
+═══════════════════════════════════════
 {erros_texto}
 
-TAREFA: Gere EXATAMENTE 3 atividades rápidas (máx 10 min cada) focadas APENAS nos pontos fracos acima.
+═══════════════════════════════════════
+SUA TAREFA
+═══════════════════════════════════════
+Crie EXATAMENTE 3 atividades de recuperação focadas NOS ERROS ESPECÍFICOS listados acima.
 
-⚠️ REGRAS CRÍTICAS DE SAÍDA:
-1. Responda APENAS com um JSON válido, SEM texto antes, SEM texto depois, SEM markdown.
-2. NÃO use ```json nem ```.
-3. NÃO inclua explicações, comentários ou introduções.
-4. Use aspas duplas em todas as chaves e strings.
+⚠️ REGRAS OBRIGATÓRIAS DE PERSONALIZAÇÃO:
+1. O campo "foco_principal" DEVE mencionar os descritores/habilidades específicos que o aluno errou.
+2. CADA atividade DEVE trabalhar UM erro específico da lista acima.
+3. As atividades DEVEM ter conteúdo REAL relacionado às questões erradas (não podem ser genéricas).
+4. Se o aluno errou uma questão sobre frações, a atividade DEVE ser sobre frações similares.
+5. Se o enunciado original for fornecido, crie uma atividade PARALELA (mesmo tema, contexto diferente).
+6. Adapte a linguagem para um aluno do {ano_serie}º ano.
+7. Se houver contexto extra do professor, INCORPORE-o nas atividades.
 
-FORMATO EXATO OBRIGATÓRIO:
+⚠️ REGRAS DE FORMATO:
+1. Responda APENAS com JSON válido.
+2. SEM markdown, SEM ```json, SEM texto antes ou depois.
+3. Comece diretamente com {{ e termine com }}.
+
+FORMATO EXATO:
 {{
-  "foco_principal": "Resuma em 1 frase qual é a maior dificuldade detectada",
-  "atividades": [
+"foco_principal": "Mencione aqui os descritores específicos que o aluno precisa recuperar (ex: D25 - Interpretação de texto)",
+"atividades": [
     {{
-      "titulo": "Nome Criativo da Atividade",
-      "tipo": "objetiva",
-      "enunciado": "Texto completo da atividade para o aluno ler/fazer",
-      "gabarito_explicado": "Explicação passo a passo da resposta correta para o professor usar na correção"
+    "titulo": "Nome criativo relacionado ao erro específico",
+    "tipo": "objetiva",
+    "enunciado": "Atividade completa, pronta para o aluno resolver, baseada no erro específico",
+    "gabarito_explicado": "Resolução passo a passo para o professor"
     }},
     {{
-      "titulo": "Nome da Atividade 2",
-      "tipo": "pratica",
-      "enunciado": "Texto da segunda atividade",
-      "gabarito_explicado": "Explicação da resposta"
+    "titulo": "Nome criativo",
+    "tipo": "pratica",
+    "enunciado": "Atividade prática baseada em outro erro específico",
+    "gabarito_explicado": "Resolução passo a passo"
     }},
     {{
-      "titulo": "Nome da Atividade 3",
-      "tipo": "reflexiva",
-      "enunciado": "Texto da terceira atividade",
-      "gabarito_explicado": "Explicação da resposta"
+    "titulo": "Nome criativo",
+    "tipo": "reflexiva",
+    "enunciado": "Atividade reflexiva sobre o terceiro erro",
+    "gabarito_explicado": "Orientações para o professor"
     }}
-  ]
+]
 }}
 
 COMECE DIRETAMENTE COM {{ E TERMINE COM }}. NADA MAIS.
@@ -1919,7 +1982,7 @@ COMECE DIRETAMENTE COM {{ E TERMINE COM }}. NADA MAIS.
         texto_resp, modelo_usado, chave_usada = _gemini_chamar(payload)
         
         if texto_resp is None:
-             return jsonify({"sucesso": False, "erro": "Falha na comunicação com a IA (cota ou rede). Tente novamente."}), 500
+            return jsonify({"sucesso": False, "erro": "Falha na comunicação com a IA (cota ou rede). Tente novamente."}), 500
 
         print(f"📥 RESPOSTA BRUTA DA IA (primeiros 500 chars): {texto_resp[:500]}")
 
@@ -1991,6 +2054,150 @@ COMECE DIRETAMENTE COM {{ E TERMINE COM }}. NADA MAIS.
                 },
                 "modelo": modelo_usado + " (fallback)"
             })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+# ==========================================================
+# 📝 NOVA: GERADOR DE EXERCÍCIOS PRÁTICOS INDIVIDUAIS
+# ==========================================================
+@app.route('/api/gerar_exercicios_individual', methods=['POST'])
+def api_gerar_exercicios():
+    """Gera lista de exercícios práticos baseada nos erros do aluno."""
+    try:
+        dados = request.get_json() or {}
+        id_aluno = dados.get('id_aluno')
+        id_avaliacao = dados.get('id_avaliacao')
+        quantidade = int(dados.get('quantidade', 5))
+        contexto_extra = dados.get('contexto_extra', '')
+        
+        if not id_aluno or not id_avaliacao:
+            return jsonify({"sucesso": False, "erro": "ID do Aluno e Prova são obrigatórios."}), 400
+
+        id_aluno = int(id_aluno)
+        id_avaliacao = int(id_avaliacao)
+
+        # Busca aluno
+        r_aluno = supabase.table("alunos").select("nome_completo, id_turma").eq("id", id_aluno).maybe_single().execute()
+        if not r_aluno.data:
+             return jsonify({"sucesso": False, "erro": "Aluno não encontrado."}), 404
+        
+        nome_aluno = r_aluno.data.get('nome_completo', 'Aluno')
+        id_turma = r_aluno.data.get('id_turma')
+
+        # Descobre o ano
+        ano_serie = 6
+        if id_turma:
+            r_turma = supabase.table("turmas").select("nome").eq("id", id_turma).maybe_single().execute()
+            if r_turma.data:
+                import re
+                m = re.search(r'(\d)', r_turma.data.get('nome', ''))
+                if m: ano_serie = int(m.group(1))
+
+        # Busca erros (mesma lógica da intervenção)
+        r_obj = supabase.table("respostas") \
+            .select("id_questao, resposta_aluno") \
+            .eq("id_aluno", id_aluno) \
+            .eq("id_avaliacao", id_avaliacao) \
+            .eq("correta", False) \
+            .limit(5) \
+            .execute()
+        
+        erros_detalhados = []
+        
+        if r_obj.data:
+            for q in r_obj.data:
+                det_q = supabase.table("questoes") \
+                    .select("numero, descritor, habilidade, enunciado, gabarito") \
+                    .eq("id", q['id_questao']) \
+                    .maybe_single().execute()
+                
+                if det_q.data:
+                    erros_detalhados.append({
+                        "numero": det_q.data.get('numero'),
+                        "descritor": det_q.data.get('descritor') or det_q.data.get('habilidade') or "",
+                        "enunciado": det_q.data.get('enunciado') or "",
+                        "gabarito": det_q.data.get('gabarito') or "",
+                        "resposta_aluno": q.get('resposta_aluno') or ""
+                    })
+
+        if not erros_detalhados:
+            return jsonify({
+                "sucesso": True,
+                "dados": {
+                    "titulo": f"Exercícios de Reforço - {nome_aluno}",
+                    "mensagem": "Nenhum erro crítico encontrado. O aluno está indo bem!",
+                    "exercicios": []
+                }
+            })
+
+        erros_texto = "\n".join([
+            f"- Questão {e['numero']} ({e['descritor']}): \"{e['enunciado'][:250]}\" | Aluno respondeu: \"{e['resposta_aluno']}\" | Correto: \"{e['gabarito']}\""
+            for e in erros_detalhados
+        ])
+
+        prompt = f"""
+Você é um professor especialista em criar exercícios de reforço para alunos do {ano_serie}º ano.
+
+ALUNO: {nome_aluno}
+CONTEXTO DO PROFESSOR: "{contexto_extra if contexto_extra else 'nenhum'}"
+
+ERROS QUE O ALUNO COMETEU NA PROVA:
+{erros_texto}
+
+TAREFA: Crie EXATAMENTE {quantidade} exercícios NOVOS (diferentes dos originais) para o aluno praticar os mesmos conceitos que errou.
+
+REGRAS:
+1. Cada exercício deve trabalhar UM dos erros listados.
+2. Os exercícios devem ser INÉDITOS (não copie os originais).
+3. Dificuldade progressiva: comece fácil e termine mais desafiador.
+4. Linguagem adequada ao {ano_serie}º ano.
+5. Se houver contexto do professor, use-o nos enunciados.
+
+FORMATO (JSON puro, sem markdown):
+{{
+  "titulo": "Lista de Exercícios de Reforço - {nome_aluno}",
+  "exercicios": [
+    {{
+      "numero": 1,
+      "descritor_foco": "Descritor que este exercício trabalha",
+      "enunciado": "Enunciado completo do exercício",
+      "alternativas": {{"A": "...", "B": "...", "C": "...", "D": "..."}},
+      "gabarito": "A",
+      "resolucao": "Resolução passo a passo para o professor/aluno conferir"
+    }}
+  ]
+}}
+
+Se os erros não forem de múltipla escolha, crie exercícios dissertativos sem o campo "alternativas" e "gabarito", apenas "resposta_esperada".
+
+COMECE COM {{ E TERMINE COM }}.
+"""
+
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.7, "responseMimeType": "application/json"},
+        }
+
+        texto_resp, modelo_usado, chave_usada = _gemini_chamar(payload)
+        
+        if texto_resp is None:
+            return jsonify({"sucesso": False, "erro": "Falha na comunicação com a IA."}), 500
+
+        data_exercicios = _extrair_json_obj(texto_resp)
+        
+        if data_exercicios is None:
+            return jsonify({"sucesso": False, "erro": "IA retornou formato inválido. Tente novamente."}), 500
+
+        print(f"✅ [EXERCÍCIOS] {len(data_exercicios.get('exercicios', []))} exercícios gerados para {nome_aluno}")
+
+        return jsonify({
+            "sucesso": True,
+            "dados": data_exercicios,
+            "modelo": modelo_usado
+        })
 
     except Exception as e:
         import traceback
