@@ -2091,13 +2091,20 @@ COMECE DIRETAMENTE COM {{ E TERMINE COM }}. NADA MAIS.
                     "id_avaliacao": id_avaliacao
                 }]
                 
-                # Busca memória existente
-                mem_check = supabase.table("memoria_alunos") \
-                    .select("id, total_planos_gerados, historico_erros, historico_planos, interesses") \
-                    .eq("id_aluno", id_aluno) \
-                    .maybe_single().execute()
+                # Busca memória existente (com proteção total)
+                mem_check = None
+                try:
+                    mem_check = supabase.table("memoria_alunos") \
+                        .select("id, total_planos_gerados, historico_erros, historico_planos, interesses") \
+                        .eq("id_aluno", id_aluno) \
+                        .maybe_single().execute()
+                except Exception as e_busca:
+                    print(f"⚠️ [MEMÓRIA] Erro na busca (ignorando): {e_busca}")
+                    mem_check = None
                 
-                if mem_check.data:
+                # Verificação dupla de segurança
+                if mem_check is not None and mem_check.data is not None:
+
                     # ATUALIZAR memória existente
                     mem_atual = mem_check.data
                     
