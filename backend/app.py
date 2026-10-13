@@ -47,13 +47,11 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # ==========================================================
 # 🔑 CLIENTE ADMIN PARA CRIAÇÃO DE USUÁRIOS (SEGURANÇA MÁXIMA)
 # ==========================================================
-# Usamos uma variável separada para não misturar com a chave anônima usada nas leituras comuns
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") 
 
 if not SUPABASE_SERVICE_KEY:
     print("⚠️ AVISO CRÍTICO: SUPABASE_SERVICE_ROLE_KEY não encontrada nas variáveis de ambiente!")
 else:
-    # Cria um cliente separado que ignora RLS (Row Level Security)
     admin_supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     print("✅ Cliente Admin do Supabase inicializado com sucesso.")
 
@@ -74,7 +72,6 @@ def api_criar_professor():
         if len(senha) < 6:
             return jsonify({"sucesso": False, "erro": "A senha deve ter pelo menos 6 caracteres."}), 400
 
-        # Verifica se o cliente admin foi criado globalmente
         if 'admin_supabase' not in globals():
              return jsonify({"sucesso": False, "erro": "Erro interno: Chave de serviço não configurada no servidor."}), 500
 
@@ -96,15 +93,13 @@ def api_criar_professor():
         except Exception as auth_err:
             error_str = str(auth_err).lower()
             
-            # Se for erro de duplicidade, NÃO tentamos buscar. Apenas avisamos.
             if "already registered" in error_str or "duplicate" in error_str:
                 print(f"ℹ️ Tentativa de criar usuário existente: {email}")
                 return jsonify({
                     "sucesso": False, 
                     "erro": f"O e-mail '{email}' já está cadastrado no sistema. Utilize o botão 'Editar Turmas' na lista abaixo para gerenciar este professor."
-                }), 200 # Retorna 200 para o JS não dar erro vermelho, mas sucesso=false
+                }), 200 
             
-            # Qualquer outro erro real (ex: senha fraca, email inválido)
             raise auth_err 
 
         # --- PASSO 2: GERENCIAR O PERFIL NA TABELA PUBLIC.PERFIS ---
@@ -179,7 +174,7 @@ app.register_blueprint(corrigir_bp)
 print("DEBUG: Blueprint 'corrigir_bp' registrado com sucesso.")
 
 # ===========================================================
-# 🚀 ROTAS DA API
+# 🚀 ROTAS DA API BÁSICAS
 # ===========================================================
 
 @app.route('/api/config/IP_Servidor', methods=['GET'])
@@ -1416,7 +1411,7 @@ def gerar_relatorio_turma(id_turma, id_avaliacao):
             ranking.sort(key=lambda x: x['nota'], reverse=True)
             top3 = ranking[:3]
             
-            medalhas = ['🥇', '🥈', '🥉']
+            medalhas = ['🥇', '🥈', '']
             top_data = [['Posição', 'Aluno', 'Nota']]
             for i, aluno in enumerate(top3):
                 top_data.append([
@@ -1606,7 +1601,94 @@ def buscar_matriz():
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 
-except Exception as e:
+@app.route('/api/gerar_questoes', methods=['POST'])
+def gerar_questoes():
+    """✨ IA cria questões (dissertativas ou objetivas) alinhadas à habilidade/descritor escolhido."""
+    try:
+        dados = request.get_json() or {}
+        codigos = dados.get('codigos') or []
+        fonte = dados.get('fonte', 'CP')
+        fonte_db = 'Currículo Paulista' if fonte == 'CP' else fonte
+        componente = dados.get('componente', 'Matemática')
+        ano = dados.get('ano', 6)
+        quantidade = max(1, min(5, int(dados.get('quantidade', 1))))
+        dificuldade = dados.get('dificuldade', 'média')
+        contexto = (dados.get('contexto') or '').strip()
+        valor_padrao = float(dados.get('valor_padrao', 2.0))
+        
+        # Novos parâmetros para múltipla escolha
+        tipo_questao = dados.get('tipo', 'aberta') # 'aberta' ou 'objetiva'
+        num_alternativas = int(dados.get('num_alternativas', 4)) # 3, 4 ou 5
+
+        if not codigos:
+            return jsonify({"sucesso": False, "erro": "Escolha ao menos uma habilidade/descritor"}), 400
+
+        # Busca as descrições oficiais na matriz
+        resp = supabase.table("matriz_curricular").select("*") \
+            .in_("codigo", codigos).eq("fonte", fonte_db).execute()
+        itens = resp.data or []
+        if not itens:
+            return jsonify({"sucesso": False, "erro": "Códigos não encontrados na matriz"}), 404
+
+        lista = "\n".join(f"- {it['codigo']} ({it['tema']}): {it['habilidade']}" for it in itens)
+        ctx = f"\nContexto pedido pelo professor: {contexto}" if contexto else ""
+
+        # LÓGICA DO PROMPT (A MÁGICA ACONTECE AQUI!)
+        if tipo_questao == 'objetiva':
+            letras = ", ".join([chr(65+i) for i in range(num_alternativas)]) # Gera A, B, C, D...
+            prompt = (
+                f"Você é um professor especialista em {componente} do {ano}º ano do Ensino Fundamental, "
+                f"alinhado ao Currículo Paulista e às matrizes de referência do SAEB.\n"
+                f"Crie {quantidade} questão(ões) de MÚLTIPLA ESCOLHA INÉDITA(s) e contextualizadas para CADA habilidade/descritor da lista abaixo.\n"
+                f"Dificuldade: {dificuldade}.{ctx}\n"
+                f"Regras obrigatórias:\n"
+                f"- Enunciado claro, com todos os dados necessários e uma demanda principal única.\n"
+                f"- Linguagem adequada a estudantes do {ano}º ano.\n"
+                f"- Exatamente {num_alternativas} alternativas ({letras}), sendo apenas UMA correta.\n"
+                f"- As alternativas incorretas devem ser plausíveis (distratores).\n"
+                f"HABILIDADES/DESCRITORES:\n{lista}\n\n"
+                f"Responda SOMENTE um array JSON válido no formato:\n"
+                f'[{{"codigo":"...","enunciado":"...","alternativas":{{"A":"texto da A","B":"texto da B","C":"texto da C","D":"texto da D"}},"gabarito":"A","valor":{valor_padrao}}}]'
+            )
+        else:
+            # Prompt original para questões abertas (dissertativas)
+            prompt = (
+                f"Você é um professor especialista em {componente} do {ano}º ano do Ensino Fundamental, "
+                f"alinhado ao Currículo Paulista e às matrizes de referência do SAEB.\n"
+                f"Crie {quantidade} questão(ões) dissertativa(s) INÉDITA(s) e contextualizadas para CADA habilidade/descritor da lista abaixo.\n"
+                f"Dificuldade: {dificuldade}.{ctx}\n"
+                f"Regras obrigatórias:\n"
+                f"- Enunciado claro, com todos os dados necessários e uma demanda principal única.\n"
+                f"- Linguagem adequada a estudantes do {ano}º ano.\n"
+                f"- Resposta esperada completa, mostrando o raciocínio/cálculos.\n"
+                f"- Critérios de correção explicando o que vale nota parcial.\n"
+                f"HABILIDADES/DESCRITORES:\n{lista}\n\n"
+                f"Responda SOMENTE um array JSON válido no formato:\n"
+                f'[{{"codigo":"...","enunciado":"...","resposta_esperada":"...","criterios":"...","valor":{valor_padrao}}}]'
+            )
+
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.8, "responseMimeType": "application/json"},
+        }
+        texto, modelo, chave = _gemini_chamar(payload)
+        if texto is None:
+            return jsonify({"sucesso": False, "erro": f"Sem cota em todas as chaves: {chave}"}), 429
+
+        questoes = _extrair_json_array(texto)
+        if not questoes:
+            return jsonify({"sucesso": False, "erro": "A IA não retornou questões válidas"}), 502
+
+        print(f"✨ [GERAR] {len(questoes)} questão(ões) criadas com {modelo} (chave {chave})")
+        return jsonify({
+            "sucesso": True,
+            "questoes": questoes,
+            "modelo": modelo,
+            "chave_usada": chave,
+        })
+
+
+    except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
@@ -1895,7 +1977,7 @@ def gerar_plano_recuperacao():
 # 🏁 INICIALIZAÇÃO DO SERVIDOR
 # ==========================================================
 if __name__ == '__main__':
-    print("🚨🚨 OMR SISTEMA 2.0 - BACKEND COMPLETO 🚨🚨")
+    print("🚨🚨 OMR SISTEMA 2.0 - BACKEND COMPLETO 🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
     print(f"🔑 Gemini chaves: {len(GEMINI_CHAVES)} configurada(s)")
     print(f"🤖 Gemini modelos: {GEMINI_MODELOS}")
