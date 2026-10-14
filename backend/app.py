@@ -57,96 +57,63 @@ else:
 
 
 @app.route('/api/criar-professor', methods=['POST'])
-def api_criar_professor():
+def criar_professor():
+    """Cria um novo usuário no Supabase Auth e adiciona ao banco de dados."""
     try:
         dados = request.get_json() or {}
-        
         nome = dados.get('nome')
         email = dados.get('email')
         senha = dados.get('senha')
-        tipo = dados.get('tipo_usuario', 'professor')
+        tipo_usuario = dados.get('tipo_usuario', 'professor')
 
         if not nome or not email or not senha:
-            return jsonify({"sucesso": False, "erro": "Nome, Email e Senha são obrigatórios."}), 400
+            return jsonify({"sucesso": False, "erro": "Nome, e-mail e senha são obrigatórios."}), 400
+
+        # 🚨 IMPORTANTE: Usar o cliente ADMIN (Service Role) para criar usuários
+        # Certifique-se de que esta variável está definida no topo do seu app.py:
+        # supabase_admin = create_client(SUPABASE_URL, os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
         
-        if len(senha) < 6:
-            return jsonify({"sucesso": False, "erro": "A senha deve ter pelo menos 6 caracteres."}), 400
-
-        if 'admin_supabase' not in globals():
-             return jsonify({"sucesso": False, "erro": "Erro interno: Chave de serviço não configurada no servidor."}), 500
-
-        user_id = None
-        action_taken = "" 
-
-        # --- PASSO ÚNICO: TENTA CRIAR. SE FALHAR POR DUPLICIDADE, AVISA AMIGÁVELMENTE. ---
         try:
-            response_auth = admin_supabase.auth.admin.create_user({
+            # Tenta criar o usuário no Auth do Supabase
+            auth_response = supabase_admin.auth.admin.create_user({
                 "email": email,
                 "password": senha,
-                "email_confirm": True,
-                "user_metadata": {"full_name": nome}
+                "email_confirm": True, # Já confirma o e-mail automaticamente
+                "user_metadata": {
+                    "nome_completo": nome,
+                    "tipo_usuario": tipo_usuario
+                }
             })
-            user_id = response_auth.user.id
-            action_taken = "criado"
-            print(f"🆕 Usuário criado com sucesso! ID: {user_id}")
-
-        except Exception as auth_err:
-            error_str = str(auth_err).lower()
             
-            if "already registered" in error_str or "duplicate" in error_str:
-                print(f"ℹ️ Tentativa de criar usuário existente: {email}")
-                return jsonify({
-                    "sucesso": False, 
-                    "erro": f"O e-mail '{email}' já está cadastrado no sistema. Utilize o botão 'Editar Turmas' na lista abaixo para gerenciar este professor."
-                }), 200 
+            user_id = auth_response.user.id
             
-            raise auth_err 
-
-        # --- PASSO 2: GERENCIAR O PERFIL NA TABELA PUBLIC.PERFIS ---
-        if user_id:
-            payload_perfil = {
+            # Insere o perfil na tabela 'perfis'
+            supabase_admin.table("perfis").insert({
                 "id": user_id,
-                "nome_completo": nome,
                 "email": email,
-                "tipo_usuario": tipo,
-                "turmas_id": [] 
-            }
+                "nome_completo": nome,
+                "tipo_usuario": tipo_usuario,
+                "turmas_id": [] # Começa sem turmas, o admin atribui depois
+            }).execute()
             
-            try:
-                admin_supabase.table('perfis').insert(payload_perfil).execute()
-                print(f"✅ Perfil inserido.")
-            except Exception as db_err:
-                err_str = str(db_err).lower()
-                if "duplicate key value violates unique constraint" in err_str or "already exists" in err_str:
-                    print(f"ℹ️ Perfil já existia. Atualizando dados básicos...")
-                    update_payload = {
-                        "nome_completo": nome,
-                        "email": email,
-                        "tipo_usuario": tipo
-                    }
-                    admin_supabase.table('perfis').update(update_payload).eq("id", user_id).execute()
-                else:
-                    raise db_err
+            print(f"✅ [GESTÃO] Professor {nome} ({email}) criado com sucesso!")
             
-            msg_sucesso = f"Professor {nome} cadastrado com sucesso!"
             return jsonify({
                 "sucesso": True, 
-                "message": msg_sucesso, 
-                "user_id": user_id,
-                "action": action_taken
-            }), 200
-        else:
-            return jsonify({"sucesso": False, "erro": "Falha interna: ID do usuário não determinado."}), 500
+                "message": f"Professor {nome} cadastrado com sucesso!"
+            })
+            
+        except Exception as auth_err:
+            print(f"❌ Erro Supabase Auth: {auth_err}")
+            # Se o erro for "User already registered", tratamos de forma amigável
+            if "already registered" in str(auth_err).lower():
+                return jsonify({"sucesso": False, "erro": "Este e-mail já está cadastrado no sistema."}), 400
+            return jsonify({"sucesso": False, "erro": f"Erro ao criar usuário: {str(auth_err)}"}), 500
 
     except Exception as e:
         import traceback
-        error_msg = str(e)
-        print(f"❌ ERRO CRÍTICO GERAL: {e}")
         traceback.print_exc()
-        return jsonify({
-            "sucesso": False, 
-            "erro": f"Falha geral: {error_msg}"
-        }), 200
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 # ==========================================================
 # 🤖 CONFIGURAÇÃO DO GEMINI (MATRIZ ANTI-COTA: chaves × modelos!)
