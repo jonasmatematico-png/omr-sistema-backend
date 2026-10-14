@@ -41,8 +41,19 @@ CORS(app)
 SUPABASE_URL = "https://mkqnaiuplkqiitwxltli.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1rcW5haXVwbGtxaWl0d3hsdGxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzOTg5MzMsImV4cCI6MjA5OTk3NDkzM30.65MoDC1gMNpNs6bCKZlCTyCn2ijaaA6y9DOnQgNxacA"
 
+# Cliente Normal (Anon)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# 🆕 Cliente Admin (Service Role) - UNIFICADO COM O NOME 'supabase_admin'
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+
+if not SUPABASE_SERVICE_ROLE_KEY:
+    print("⚠️ AVISO: SUPABASE_SERVICE_ROLE_KEY não encontrada. Cadastro de usuários pode falhar.")
+    # Fallback para não quebrar o app, mas o cadastro não vai funcionar sem a chave
+    supabase_admin = supabase 
+else:
+    supabase_admin: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    print("✅ Cliente Admin do Supabase inicializado com sucesso.")
 
 # ==========================================================
 # 🔑 CLIENTE ADMIN PARA CRIAÇÃO DE USUÁRIOS (SEGURANÇA MÁXIMA)
