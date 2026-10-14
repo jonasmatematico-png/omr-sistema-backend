@@ -98,14 +98,14 @@ def criar_professor():
             
             user_id = auth_response.user.id
             
-            # Insere o perfil na tabela 'perfis'
-            supabase_admin.table("perfis").insert({
+            # 🆕 Usa UPSERT: Insere se não existir, ou atualiza se já existir (evita erro 23505)
+            supabase_admin.table("perfis").upsert({
                 "id": user_id,
                 "email": email,
                 "nome_completo": nome,
                 "tipo_usuario": tipo_usuario,
                 "turmas_id": [] # Começa sem turmas, o admin atribui depois
-            }).execute()
+            }, on_conflict="id").execute()
             
             print(f"✅ [GESTÃO] Professor {nome} ({email}) criado com sucesso!")
             
