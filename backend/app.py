@@ -1963,9 +1963,9 @@ def api_gerar_intervencao():
         
         print(f"🧠 [MEMÓRIA] Estilo: {memoria.get('estilo_aprendizagem')} | Interesses: {memoria.get('interesses')}")
 
-        # 4. PROMPT MESTRE REFORÇADO COM MEMÓRIA (personalização real)
+        # 4. PROMPT MESTRE TURBINADO COM MEMÓRIA (Personalização Real)
         prompt_mestre = f"""
-Você é um Tutor Pedagógico Especialista em Educação Básica Brasileira (Currículo Paulista e SAEB).
+Você é um Tutor Pedagógico Especialista em Educação Básica Brasileira (Currículo Paulista e SAEB), com foco em ensino personalizado e adaptativo.
 
 ═══════════════════════════════════════
 DADOS DO ALUNO
@@ -1973,10 +1973,10 @@ DADOS DO ALUNO
 ALUNO: {nome_aluno}
 ANO ESCOLAR: {ano_serie}º ano do Ensino Fundamental
 
-🧠 MEMÓRIA PEDAGÓGICA DO ALUNO:
+🧠 MEMÓRIA PEDAGÓGICA DO ALUNO (USE ISSO!):
 - Estilo de aprendizagem: {memoria.get('estilo_aprendizagem', 'não identificado')}
 - Interesses pessoais: {memoria.get('interesses', 'não identificados')}
-- Total de planos já gerados: {memoria.get('total_planos_gerados', 0)}
+- Total de planos já gerados para este aluno: {memoria.get('total_planos_gerados', 0)}
 - Últimos erros registrados: {jsonlib.dumps(memoria.get('historico_erros', [])[-3:], ensure_ascii=False)}
 
 CONTEXTO EXTRA DO PROFESSOR: "{contexto_extra if contexto_extra else 'nenhum'}"
@@ -1987,45 +1987,45 @@ ERROS ESPECÍFICOS DESTA PROVA
 {erros_texto}
 
 ═══════════════════════════════════════
-SUA TAREFA
+SUA TAREFA: CRIAR 3 ATIVIDADES DE RECUPERAÇÃO
 ═══════════════════════════════════════
-Crie EXATAMENTE 3 atividades de recuperação focadas NOS ERROS ESPECÍFICOS listados acima.
 
-⚠️ REGRAS DE PERSONALIZAÇÃO (USE A MEMÓRIA!):
-1. Se o aluno tem INTERESSES identificados (futebol, música, games, etc), INCORPORE-OS no contexto das atividades
-2. Adapte ao ESTILO DE APRENDIZAGEM do aluno (visual = use descrições de imagens; auditivo = use diálogos; cinestésico = use atividades práticas)
-3. NÃO repita abordagens que já foram usadas antes (consulte o total de planos gerados)
-4. O campo "foco_principal" DEVE mencionar os descritores específicos que o aluno errou
-5. CADA atividade DEVE trabalhar UM erro específico da lista acima
-6. Adapte a linguagem para um aluno do {ano_serie}º ano
-7. Se houver contexto extra do professor, INCORPORE-o nas atividades
+⚠️ REGRAS OBRIGATÓRIAS DE PERSONALIZAÇÃO (NÃO IGNORE):
+1. USE OS INTERESSES: Se o aluno tem interesses (futebol, games, música, etc.), o enunciado da atividade DEVE ser contextualizado com esse tema. Ex: Se gosta de futebol, o problema de matemática deve ser sobre campeonato.
+2. ADAPTE AO ESTILO: 
+   - Se 'visual': Inclua instruções como "Desenhe um esquema..." ou "Observe o gráfico...".
+   - Se 'auditivo': Use diálogos ou peça para "Explicar em voz alta para um colega".
+   - Se 'cinestésico': Proponha atividades com materiais concretos ou movimento.
+3. PROGRESSÃO: Se `Total de planos já gerados` for maior que 0, mencione no enunciado: "Como você já praticou isso antes, agora vamos tentar um desafio um pouco diferente...".
+4. FOCO NO DESCRITOR: O campo "foco_principal" deve citar explicitamente o código do descritor/habilidade (ex: D25).
+5. CADA atividade deve focar em UM erro diferente da lista acima.
 
-⚠️ REGRAS DE FORMATO:
-1. Responda APENAS com JSON válido
-2. SEM markdown, SEM ```json, SEM texto antes ou depois
-3. Comece diretamente com {{ e termine com }}
+⚠️ REGRAS DE FORMATO (CRÍTICO):
+1. Responda APENAS com JSON válido.
+2. SEM markdown, SEM ```json, SEM texto antes ou depois.
+3. Comece diretamente com {{ e termine com }}.
 
-FORMATO EXATO:
+FORMATO EXATO DE SAÍDA:
 {{
-"foco_principal": "Mencione os descritores específicos e como as atividades se conectam aos interesses do aluno",
+"foco_principal": "Recuperação do Descritor [CÓDIGO], utilizando o interesse do aluno em [INTERESSE] para facilitar a compreensão.",
 "atividades": [
     {{
-    "titulo": "Nome criativo (use interesse do aluno se possível)",
+    "titulo": "Nome criativo usando o interesse do aluno",
     "tipo": "objetiva",
-    "enunciado": "Atividade completa personalizada baseada no erro específico",
-    "gabarito_explicado": "Resolução passo a passo para o professor"
+    "enunciado": "Enunciado completo, contextualizado com o interesse e adaptado ao estilo de aprendizagem.",
+    "gabarito_explicado": "Resolução passo a passo clara para o professor."
     }},
     {{
-    "titulo": "Nome criativo",
+    "titulo": "Nome criativo usando o interesse do aluno",
     "tipo": "pratica",
-    "enunciado": "Atividade prática baseada em outro erro específico",
-    "gabarito_explicado": "Resolução passo a passo"
+    "enunciado": "Atividade prática ou com material concreto, baseada no segundo erro.",
+    "gabarito_explicado": "Resolução passo a passo clara para o professor."
     }},
     {{
-    "titulo": "Nome criativo",
+    "titulo": "Nome criativo usando o interesse do aluno",
     "tipo": "reflexiva",
-    "enunciado": "Atividade reflexiva sobre o terceiro erro",
-    "gabarito_explicado": "Orientações para o professor"
+    "enunciado": "Atividade de explicação ou diálogo, baseada no terceiro erro.",
+    "gabarito_explicado": "O que o professor deve observar na resposta do aluno."
     }}
 ]
 }}
