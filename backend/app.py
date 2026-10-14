@@ -188,7 +188,8 @@ def extrair_interesses(contexto_extra):
         return ''
     
     keywords = ['futebol', 'música', 'games', 'videogame', 'esporte', 'dança', 
-                'arte', 'ciência', 'tecnologia', 'animais', 'natureza']
+                    'arte', 'desenhar', 'quadrinhos', 'ciência', 'tecnologia', 'animais', 'natureza']
+        
     
     interesses_encontrados = []
     contexto_lower = contexto_extra.lower()
@@ -698,6 +699,58 @@ def ping():
         "modelos": GEMINI_MODELOS,
         "pdf_ativo": PDF_OK
     }), 200
+
+    # ==========================================================
+# 🎓 SISTEMA DE EXPERTS DE IA PEDAGÓGICOS
+# ==========================================================
+EXPERTS_PEDAGOGICOS = {
+    "criador_provas": {
+        "nome": "Criador de Provas",
+        "emoji": "📝",
+        "modelo": "gemini-2.0-flash",
+        "prompt_base": """Você é um Professor Especialista em elaboração de avaliações alinhadas ao Currículo Paulista e matrizes do SAEB.
+REGRAS:
+1. Crie questões INÉDITAS e contextualizadas com a realidade brasileira.
+2. Para múltipla escolha: forneça exatamente {num_alternativas} alternativas, com apenas 1 correta e distratores plausíveis.
+3. Para dissertativas: forneça a resposta esperada e critérios de correção (o que vale nota parcial).
+4. Sempre indique o Descritor/Habilidade BNCC trabalhado.
+RESPOSTA EM JSON ESTRITO."""
+    },
+    "tutor_recuperacao": {
+        "nome": "Tutor de Recuperação",
+        "emoji": "🎯",
+        "modelo": "gemini-2.0-flash", # Ou 2.0-pro se tiver acesso
+        "prompt_base": """Você é um Tutor Pedagógico especializado em recuperação de aprendizagem e ensino adaptativo.
+REGRAS:
+1. Analise os erros do aluno e crie uma trilha progressiva (do mais fácil ao mais desafiador).
+2. USE OS INTERESSES DO ALUNO para contextualizar os exemplos (ex: se gosta de futebol, use problemas de campeonato).
+3. Adapte a linguagem ao ano escolar ({ano_serie}º ano).
+4. Forneça o gabarito comentado passo a passo para o professor.
+RESPOSTA EM JSON ESTRITO."""
+    },
+    "analista_desempenho": {
+        "nome": "Analista de Desempenho",
+        "emoji": "📊",
+        "modelo": "gemini-2.0-flash",
+        "prompt_base": """Você é um Coordenador Pedagógico especialista em análise de dados educacionais.
+REGRAS:
+1. Analise os dados de desempenho fornecidos e identifique padrões de erro da turma.
+2. Sugira 3 ações pedagógicas práticas e imediatas para o professor.
+3. Seja direto, use linguagem profissional e foque em soluções.
+RESPOSTA EM JSON ESTRITO com campos: "analise_geral", "pontos_criticos", "acoes_sugeridas" (lista)."""
+    },
+    "corretor_dissertativo": {
+        "nome": "Corretor Dissertativo",
+        "emoji": "✍️",
+        "modelo": "gemini-2.0-flash",
+        "prompt_base": """Você é um corretor experiente de provas dissertativas (padrão SAEB/ENEM).
+REGRAS:
+1. Avalie a resposta do aluno com base no enunciado e na rubrica fornecidos.
+2. Atribua uma nota de 0 a {valor_questao}.
+3. Forneça um feedback construtivo, apontando o que o aluno acertou e onde precisa melhorar.
+RESPOSTA EM JSON ESTRITO com campos: "nota_atribuida", "feedback_aluno", "justificativa_professor"."""
+    }
+}
 
 # ==========================================================
 # 🤖 CORREÇÃO DISSERTATIVA (matriz anti-cota)
@@ -2297,6 +2350,82 @@ COMECE DIRETAMENTE COM {{ E TERMINE COM }}. NADA MAIS.
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
+@app.route('/api/chamar_expert', methods=['POST'])
+def chamar_expert_ia():
+    """Rota unificada para todos os Experts de IA Pedagógicos"""
+    try:
+        dados = request.get_json() or {}
+        expert_type = dados.get('expert_type')
+        contexto = dados.get('contexto', '')
+        dados_especificos = dados.get('dados_especificos', {})
+        id_aluno = dados.get('id_aluno')
+        
+        if not expert_type or expert_type not in EXPERTS_PEDAGOGICOS:
+            return jsonify({"sucesso": False, "erro": "Tipo de expert inválido."}), 400
+            
+        expert = EXPERTS_PEDAGOGICOS[expert_type]
+        
+        # 🧠 Busca memória do aluno se o ID for fornecido (Super Personalização!)
+        memoria_info = ""
+        if id_aluno:
+            try:
+                mem_resp = supabase.table("memoria_alunos").select("estilo_aprendizagem, interesses, total_planos_gerados").eq("id_aluno", id_aluno).maybe_single().execute()
+                if mem_resp and mem_resp.data:
+                    m = mem_resp.data
+                    memoria_info = f"\n\n🧠 MEMÓRIA DO ALUNO:\n- Estilo: {m.get('estilo_aprendizagem', 'N/A')}\n- Interesses: {m.get('interesses', 'N/A')}\n- Planos anteriores: {m.get('total_planos_gerados', 0)}"
+            except Exception:
+                pass # Falha silenciosa, não quebra o expert
+
+        # Monta o prompt final
+        prompt_final = f"""{expert['prompt_base']}
+
+{memoria_info}
+
+CONTEXTO E DADOS DA TAREFA:
+{contexto}
+
+DETALHES ESPECÍFICOS:
+{jsonlib.dumps(dados_especificos, ensure_ascii=False, indent=2)}
+
+⚠️ LEMBRE-SE: Responda APENAS com JSON válido, sem markdown, começando com {{ e terminando com }}."""
+
+        payload = {
+            "contents": [{"parts": [{"text": prompt_final}]}],
+            "generationConfig": {
+                "temperature": 0.7, 
+                "responseMimeType": "application/json"
+            },
+        }
+
+        # Chama o Gemini (usando o modelo específico do expert ou o padrão)
+        # Nota: Se quiser forçar o modelo do expert, podemos adaptar _gemini_chamar, 
+        # mas por enquanto usamos a matriz anti-cota padrão que já funciona.
+        texto_resp, modelo_usado, chave_usada = _gemini_chamar(payload)
+        
+        if texto_resp is None:
+            return jsonify({"sucesso": False, "erro": "Falha na comunicação com a IA."}), 500
+
+        # Extrai o JSON com a função robusta que já criamos
+        data_result = _extrair_json_obj(texto_resp)
+        
+        if data_result is None:
+            print(f"❌ [EXPERT {expert_type}] Falha ao parsear JSON. Resposta bruta: {texto_resp[:300]}")
+            return jsonify({"sucesso": False, "erro": "A IA retornou um formato inválido."}), 500
+
+        print(f"✅ [EXPERT {expert['nome']}] Tarefa concluída com sucesso!")
+
+        return jsonify({
+            "sucesso": True,
+            "dados": data_result,
+            "expert": expert['nome'],
+            "modelo": modelo_usado
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
 # ==========================================================
 # 📝 NOVA: GERADOR DE EXERCÍCIOS PRÁTICOS INDIVIDUAIS
 # ==========================================================
@@ -2319,7 +2448,7 @@ def api_gerar_exercicios():
         # Busca aluno
         r_aluno = supabase.table("alunos").select("nome_completo, id_turma").eq("id", id_aluno).maybe_single().execute()
         if not r_aluno.data:
-             return jsonify({"sucesso": False, "erro": "Aluno não encontrado."}), 404
+            return jsonify({"sucesso": False, "erro": "Aluno não encontrado."}), 404
         
         nome_aluno = r_aluno.data.get('nome_completo', 'Aluno')
         id_turma = r_aluno.data.get('id_turma')
