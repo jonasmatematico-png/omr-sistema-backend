@@ -694,41 +694,31 @@ REGRAS:
 4. Sempre indique o Descritor/Habilidade BNCC trabalhado.
 RESPOSTA EM JSON ESTRITO."""
     },
+
     "tutor_recuperacao": {
         "nome": "Tutor de Recuperação",
         "emoji": "🎯",
-        "modelo": "gemini-2.0-flash", # Ou 2.0-pro se tiver acesso
+        "modelo": "gemini-2.0-flash",
         "prompt_base": """Você é um Tutor Pedagógico especializado em recuperação de aprendizagem e ensino adaptativo.
 REGRAS:
 1. Analise os erros do aluno e crie uma trilha progressiva (do mais fácil ao mais desafiador).
 2. USE OS INTERESSES DO ALUNO para contextualizar os exemplos (ex: se gosta de futebol, use problemas de campeonato).
-3. Adapte a linguagem ao ano escolar ({ano_serie}º ano).
+3. Adapte a linguagem ao ano escolar.
 4. Forneça o gabarito comentado passo a passo para o professor.
-RESPOSTA EM JSON ESTRITO."""
-    },
-    "analista_desempenho": {
-        "nome": "Analista de Desempenho",
-        "emoji": "📊",
-        "modelo": "gemini-2.0-flash",
-        "prompt_base": """Você é um Coordenador Pedagógico especialista em análise de dados educacionais.
-REGRAS:
-1. Analise os dados de desempenho fornecidos e identifique padrões de erro da turma.
-2. Sugira 3 ações pedagógicas práticas e imediatas para o professor.
-3. Seja direto, use linguagem profissional e foque em soluções.
-RESPOSTA EM JSON ESTRITO com campos: "analise_geral", "pontos_criticos", "acoes_sugeridas" (lista)."""
-    },
-    "corretor_dissertativo": {
-        "nome": "Corretor Dissertativo",
-        "emoji": "✍️",
-        "modelo": "gemini-2.0-flash",
-        "prompt_base": """Você é um corretor experiente de provas dissertativas (padrão SAEB/ENEM).
-REGRAS:
-1. Avalie a resposta do aluno com base no enunciado e na rubrica fornecidos.
-2. Atribua uma nota de 0 a {valor_questao}.
-3. Forneça um feedback construtivo, apontando o que o aluno acertou e onde precisa melhorar.
-RESPOSTA EM JSON ESTRITO com campos: "nota_atribuida", "feedback_aluno", "justificativa_professor"."""
+
+FORMATO DE SAÍDA (JSON ESTRITO, SEM MARKDOWN):
+{
+"foco_principal": "Breve resumo do foco da recuperação e como os interesses do aluno foram usados","atividades": [
+    {
+    "titulo": "Nome criativo da atividade",
+    "tipo": "objetiva ou pratica ou reflexiva",
+    "enunciado": "Texto completo da atividade para o aluno",
+    "gabarito_explicado": "Resolução passo a passo clara para o professor"
     }
+]
 }
+Responda APENAS com o JSON válido, começando com { e terminando com }."""
+    },
 
 # ==========================================================
 # 🤖 CORREÇÃO DISSERTATIVA (matriz anti-cota)
