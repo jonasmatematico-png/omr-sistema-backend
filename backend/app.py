@@ -2383,30 +2383,28 @@ DETALHES ESPECÍFICOS:
 
 ⚠️ LEMBRE-SE: Responda APENAS com JSON válido, sem markdown, começando com {{ e terminando com }}."""
 
+        # 1. Montamos o payload SEM o responseMimeType (para permitir texto livre)
         payload = {
             "contents": [{"parts": [{"text": prompt_final}]}],
             "generationConfig": {
-                "temperature": 0.7, 
-                "responseMimeType": "application/json"
+                "temperature": 0.7
+                # 🚫 REMOVIDO: "responseMimeType": "application/json"
             },
         }
 
-        # Chama o Gemini (usando o modelo específico do expert ou o padrão)
-        # Nota: Se quiser forçar o modelo do expert, podemos adaptar _gemini_chamar, 
-        # mas por enquanto usamos a matriz anti-cota padrão que já funciona.
         texto_resp, modelo_usado, chave_usada = _gemini_chamar(payload)
         
         if texto_resp is None:
             return jsonify({"sucesso": False, "erro": "Falha na comunicação com a IA."}), 500
 
-        # Extrai o JSON com a função robusta que já criamos
+        # 2. Tentamos extrair JSON. Se falhar (porque a IA mandou texto puro), usamos o texto puro.
         data_result = _extrair_json_obj(texto_resp)
         
         if data_result is None:
-            print(f"❌ [EXPERT {expert_type}] Falha ao parsear JSON. Resposta bruta: {texto_resp[:300]}")
-            return jsonify({"sucesso": False, "erro": "A IA retornou um formato inválido."}), 500
-
-        print(f"✅ [EXPERT {expert['nome']}] Tarefa concluída com sucesso!")
+            # Se não é JSON, empacotamos o texto puro numa chave especial
+            data_result = {"resposta_documento": texto_resp}
+        
+        print(f"✅ [EXPERT {expert['nome']}] Tarefa concluída!")
 
         return jsonify({
             "sucesso": True,
