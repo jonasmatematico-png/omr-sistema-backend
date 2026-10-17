@@ -1,6 +1,10 @@
 # app.py
 # OMR Sistema 2.0 - Backend Completo (Supabase + Câmera OMR + Gemini + Relatórios PDF)
+import os
+from dotenv import load_dotenv
 
+# Força o carregamento do arquivo com o nome exato que criamos
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), 'variaveis.env'))
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from supabase import create_client, Client
@@ -666,19 +670,6 @@ def pagina_relatorios():
         return f"<h1>Erro: {e}</h1>", 500
 
 # ==========================================================
-# 🏓 ROTA PING (UptimeRobot)
-# ==========================================================
-@app.route('/api/ping', methods=['GET'])
-def ping():
-    return jsonify({
-        "sucesso": True,
-        "pong": "servidor acordado!",
-        "chaves": len(GEMINI_CHAVES),
-        "modelos": GEMINI_MODELOS,
-        "pdf_ativo": PDF_OK
-    }), 200
-
-# ==========================================================
 # 🎓 SISTEMA DE EXPERTS DE IA PEDAGÓGICOS
 # ==========================================================
 EXPERTS_PEDAGOGICOS = {
@@ -686,64 +677,137 @@ EXPERTS_PEDAGOGICOS = {
         "nome": "Tutor de Recuperação",
         "emoji": "🎯",
         "modelo": "gemini-2.0-flash",
-        "prompt_base": """Você é um Tutor Pedagógico especializado em recuperação de aprendizagem e ensino adaptativo.
-SUA TAREFA: Criar um plano de recuperação personalizado, claro e motivador.
+        "prompt_base": """Você é um Tutor Pedagógico especializado em recuperação de aprendizagem.
+Responda APENAS com texto limpo e estruturado, sem sintaxe de código JSON, sem chaves {} ou aspas "".
 
-REGRAS:
-1. Analise os erros e crie uma trilha progressiva (do mais fácil ao mais desafiador).
-2. USE OS INTERESSES DO ALUNO para contextualizar os exemplos (ex: futebol, desenhar).
-3. Adapte a linguagem ao ano escolar.
-4. Forneça o gabarito comentado passo a passo para o professor.
-
-FORMATO DE RESPOSTA (Texto limpo e estruturado. NÃO use sintaxe de código JSON, NÃO use chaves {} ou aspas "" no texto final):
-
+FORMATO:
 🎯 FOCO PRINCIPAL:
-[Breve resumo do foco da recuperação e como os interesses do aluno foram usados]
+[Breve resumo do foco e como os interesses do aluno foram usados]
 
 📋 TRILHA DE APRENDIZAGEM:
-
 🟢 Nível 1 - Mais Fácil:
-• Objetivo: [Objetivo da etapa]
-• Contexto: [Contextualização com o interesse do aluno]
-• Exercício: [Enunciado claro e direto para o aluno]
+• Objetivo: [Objetivo]
+• Contexto: [Contextualização]
+• Exercício: [Enunciado claro]
 • Gabarito Professor: [Resolução passo a passo]
 
 🟡 Nível 2 - Intermediário:
-• Objetivo: [Objetivo da etapa]
+• Objetivo: [Objetivo]
 • Contexto: [Contextualização]
 • Exercício: [Enunciado claro]
 • Gabarito Professor: [Resolução passo a passo]
 
 🔴 Nível 3 - Desafiador:
-• Objetivo: [Objetivo da etapa]
+• Objetivo: [Objetivo]
 • Contexto: [Contextualização]
 • Exercício: [Enunciado claro]
-• Gabarito Professor: [Resolução passo a passo]
-
-Responda APENAS com o texto formatado acima, de forma limpa, profissional e sem marcas de código."""
+• Gabarito Professor: [Resolução passo a passo]"""
     },
+    
     "criador_provas": {
         "nome": "Criador de Provas",
         "emoji": "📝",
         "modelo": "gemini-2.0-flash",
-        "prompt_base": """Você é um Professor Especialista em elaboração de avaliações alinhadas ao Currículo Paulista e matrizes do SAEB.
-Crie questões INÉDITAS e contextualizadas. Forneça o enunciado, as alternativas (se for múltipla escolha) e o gabarito comentado. Responda em texto limpo e estruturado, sem sintaxe de código JSON."""
+        "prompt_base": """Você é um Professor Especialista em elaboração de avaliações.
+Crie questões inéditas e contextualizadas. Responda APENAS com JSON válido, sem markdown, começando com { e terminando com }:
+{
+  "questoes": [
+    {
+      "enunciado": "Texto completo da questão",
+      "alternativas": {
+        "a": "Texto da alternativa A",
+        "b": "Texto da alternativa B",
+        "c": "Texto da alternativa C",
+        "d": "Texto da alternativa D"
+      },
+      "gabarito": "Letra correta (ex: a)",
+      "explicacao": "Resolução passo a passo comentada"
+    }
+  ]
+}"""
     },
+    
     "analista_desempenho": {
         "nome": "Analista de Desempenho",
         "emoji": "📊",
         "modelo": "gemini-2.0-flash",
         "prompt_base": """Você é um Coordenador Pedagógico especialista em análise de dados educacionais.
-Analise os dados fornecidos e sugira 3 ações pedagógicas práticas. Responda em texto limpo, com tópicos, sem sintaxe de código JSON."""
+Responda APENAS com texto limpo e estruturado, sem sintaxe de código JSON, sem chaves {} ou aspas "".
+
+FORMATO:
+📊 ANÁLISE GERAL:
+[Resumo do desempenho geral da turma com base nos dados]
+
+⚠️ PONTOS CRÍTICOS:
+• [Ponto de atenção 1]
+• [Ponto de atenção 2]
+
+💡 AÇÕES SUGERIDAS (Plano de Ação):
+1. [Ação prática 1]
+2. [Ação prática 2]
+3. [Ação prática 3]"""
     },
+    
     "corretor_dissertativo": {
         "nome": "Corretor Dissertativo",
         "emoji": "✍️",
         "modelo": "gemini-2.0-flash",
-        "prompt_base": """Você é um corretor experiente de provas dissertativas.
-Avalie a resposta do aluno, atribua uma nota e forneça um feedback construtivo. Responda em texto limpo e estruturado, sem sintaxe de código JSON."""
+        "prompt_base": """Você é um corretor experiente de provas dissertativas (padrão SAEB/ENEM).
+Responda APENAS com texto limpo e estruturado, sem sintaxe de código JSON, sem chaves {} ou aspas "".
+
+FORMATO:
+✍️ CORREÇÃO DISSERTATIVA:
+
+🎯 NOTA ATRIBUÍDA: [Nota] / [Valor Máximo]
+
+✅ FEEDBACK PARA O ALUNO:
+[Texto direto, encorajador e claro, explicando o que faltou ou o que foi bom]
+
+🧠 JUSTIFICATIVA PARA O PROFESSOR:
+[Análise técnica da resposta, destacando os critérios da rubrica que foram ou não atendidos]"""
     }
 }
+
+# ==========================================================
+# 📏 PARÂMETROS DE PROFICIÊNCIA (RÉGUA DE CLASSIFICAÇÃO)
+# ==========================================================
+PARAMETROS_PROFICIENCIA = {
+    "abaixo_basico": {
+        "min": 0,
+        "max": 4.92,
+        "nivel": "Abaixo do Básico",
+        "devolutiva": "Dificuldade em localizar informações explícitas e compreender o texto."
+    },
+    "basico": {
+        "min": 5.0,
+        "max": 6.42,
+        "nivel": "Básico",
+        "devolutiva": "Localiza informações, mas apresenta dificuldade com inferências e análises."
+    },
+    "adequado": {
+        "min": 6.51,
+        "max": 8.34,
+        "nivel": "Adequado",
+        "devolutiva": "Compreende inferências e interpreta ideias implícitas de forma consistente."
+    },
+    "avancado": {
+        "min": 8.67,
+        "max": 10.0,
+        "nivel": "Avançado",
+        "devolutiva": "Leitura crítica; interpreta valores, intenções e contextos históricos."
+    }
+}
+
+def classificar_proficiencia(nota_final):
+    """Classifica o aluno baseado na nota final usando uma régua contínua (sem buracos)."""
+    if nota_final <= 4.92:
+        return "Abaixo do Básico", "Dificuldade em localizar informações explícitas e compreender o texto."
+    elif nota_final <= 6.42:
+        return "Básico", "Localiza informações, mas apresenta dificuldade com inferências e análises."
+    elif nota_final <= 8.34:
+        return "Adequado", "Compreende inferências e interpreta ideias implícitas de forma consistente."
+    else: # Qualquer nota acima de 8.34 até 10.0
+        return "Avançado", "Leitura crítica; interpreta valores, intenções e contextos históricos."
 
 # ==========================================================
 # 🤖 CORREÇÃO DISSERTATIVA (matriz anti-cota)
@@ -2345,63 +2409,47 @@ COMECE DIRETAMENTE COM {{ E TERMINE COM }}. NADA MAIS.
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 @app.route('/api/chamar_expert', methods=['POST'])
-def chamar_expert_ia():
-    """Rota unificada para todos os Experts de IA Pedagógicos"""
+def chamar_expert():
     try:
         dados = request.get_json() or {}
         expert_type = dados.get('expert_type')
-        contexto = dados.get('contexto', '')
-        dados_especificos = dados.get('dados_especificos', {})
+        contexto = dados.get('contexto')
         id_aluno = dados.get('id_aluno')
         
-        if not expert_type or expert_type not in EXPERTS_PEDAGOGICOS:
-            return jsonify({"sucesso": False, "erro": "Tipo de expert inválido."}), 400
-            
-        expert = EXPERTS_PEDAGOGICOS[expert_type]
-        
-        # 🧠 Busca memória do aluno se o ID for fornecido (Super Personalização!)
-        memoria_info = ""
-        if id_aluno:
-            try:
-                mem_resp = supabase.table("memoria_alunos").select("estilo_aprendizagem, interesses, total_planos_gerados").eq("id_aluno", id_aluno).maybe_single().execute()
-                if mem_resp and mem_resp.data:
-                    m = mem_resp.data
-                    memoria_info = f"\n\n🧠 MEMÓRIA DO ALUNO:\n- Estilo: {m.get('estilo_aprendizagem', 'N/A')}\n- Interesses: {m.get('interesses', 'N/A')}\n- Planos anteriores: {m.get('total_planos_gerados', 0)}"
-            except Exception:
-                pass # Falha silenciosa, não quebra o expert
+        if not expert_type or not contexto:
+            return jsonify({"sucesso": False, "erro": "Tipo do expert e contexto são obrigatórios."}), 400
+
+        expert = EXPERTS_PEDAGOGICOS.get(expert_type)
+        if not expert:
+            return jsonify({"sucesso": False, "erro": "Expert não encontrado."}), 400
 
         # Monta o prompt final
-        prompt_final = f"""{expert['prompt_base']}
+        prompt_final = f"{expert['prompt_base']}\n\nDADOS/CONTEXTO:\n{contexto}"
 
-{memoria_info}
-
-CONTEXTO E DADOS DA TAREFA:
-{contexto}
-
-DETALHES ESPECÍFICOS:
-{jsonlib.dumps(dados_especificos, ensure_ascii=False, indent=2)}
-
-⚠️ LEMBRE-SE: Responda APENAS com JSON válido, sem markdown, começando com {{ e terminando com }}."""
-
-        # 1. Montamos o payload SEM o responseMimeType (para permitir texto livre)
         payload = {
             "contents": [{"parts": [{"text": prompt_final}]}],
-            "generationConfig": {
-                "temperature": 0.7
-                # 🚫 REMOVIDO: "responseMimeType": "application/json"
-            },
+            "generationConfig": {"temperature": 0.7},
         }
 
-        texto_resp, modelo_usado, chave_usada = _gemini_chamar(payload)
+        # 🚨 CORREÇÃO AQUI: A função retorna 2 valores (texto, modelo), não 3.
+        # Nota: Se a sua função se chamar _chamar_gemini ou outra coisa, ajuste o nome abaixo.
+        resposta = _gemini_chamar(payload)
         
+        # Desempacotamento seguro para 2 valores
+        if isinstance(resposta, tuple) and len(resposta) >= 2:
+            texto_resp = resposta[0]
+            modelo_usado = resposta[1]
+        else:
+            texto_resp = resposta
+            modelo_usado = expert.get('modelo', 'gemini-2.0-flash')
+
         if texto_resp is None:
             return jsonify({"sucesso": False, "erro": "Falha na comunicação com a IA."}), 500
 
-        # 2. Tentamos extrair JSON. Se falhar (porque a IA mandou texto puro), usamos o texto puro.
+        # Tenta extrair JSON. Se falhar (porque é texto puro), usa o texto puro.
         data_result = _extrair_json_obj(texto_resp)
         
         if data_result is None:
-            # Se não é JSON, empacotamos o texto puro numa chave especial
             data_result = {"resposta_documento": texto_resp}
         
         print(f"✅ [EXPERT {expert['nome']}] Tarefa concluída!")
@@ -2762,6 +2810,296 @@ def obter_memoria_aluno(id_aluno):
     except Exception as e:
         print(f"❌ Erro ao obter memória: {e}")
         return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+# ==========================================================
+# 📊 UPLOAD DE PLANILHA E DIAGNÓSTICO AUTOMÁTICO
+# ==========================================================
+import csv
+import io
+
+@app.route('/api/upload_diagnostico', methods=['POST'])
+def upload_diagnostico():
+    try:
+        if 'file' not in request.files:
+            return jsonify({"sucesso": False, "erro": "Nenhum arquivo enviado."}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"sucesso": False, "erro": "Arquivo vazio."}), 400
+
+        # Lê o CSV
+        content = file.read().decode('utf-8-sig')  # utf-8-sig remove BOM do Excel
+        reader = csv.DictReader(io.StringIO(content), delimiter=',')
+        
+        alunos = []
+        total_acertos_por_questao = {}
+        total_alunos = 0
+        soma_notas = 0
+        niveis_count = {"Abaixo do Básico": 0, "Básico": 0, "Adequado": 0, "Avançado": 0}
+        
+        for row in reader:
+            # Pula linhas vazias ou cabeçalhos de estatísticas
+            if not row.get('Aluno') or not row.get('Aluno').strip():
+                continue
+            if row.get('Aluno').strip() in ['Total de Alunos', 'Abaixo do Básico', 'Questão com mais acertos']:
+                continue
+                
+            total_alunos += 1
+            
+            # Nota final (tenta converter, tratando vírgula como decimal)
+            nota_str = row.get('Nota Final', '0').replace(',', '.')
+            try:
+                nota = float(nota_str)
+            except:
+                nota = 0.0
+            soma_notas += nota
+            
+            # Nível SAEB
+            nivel = row.get('Nível SAEB', '').strip()
+            if 'Abaixo' in nivel:
+                niveis_count["Abaixo do Básico"] += 1
+            elif 'Básico' in nivel:
+                niveis_count["Básico"] += 1
+            elif 'Adequado' in nivel:
+                niveis_count["Adequado"] += 1
+            elif 'Avançado' in nivel:
+                niveis_count["Avançado"] += 1
+            
+            # Acertos por questão (C1 a C10)
+            for i in range(1, 11):
+                col = f'C{i}'
+                val = row.get(col, '0').strip()
+                if val == '1':
+                    total_acertos_por_questao[f'Q{i}'] = total_acertos_por_questao.get(f'Q{i}', 0) + 1
+            
+            alunos.append({
+                "nome": row.get('Aluno', ''),
+                "nota": nota,
+                "nivel": nivel,
+                "devolutiva": row.get('Devolutiva', '')
+            })
+        
+        if total_alunos == 0:
+            return jsonify({"sucesso": False, "erro": "Nenhum aluno encontrado na planilha."}), 400
+        
+        media_turma = round(soma_notas / total_alunos, 2)
+        
+        # Calcula % de acerto por questão
+        percentuais_questoes = {}
+        for q, acertos in total_acertos_por_questao.items():
+            percentuais_questoes[q] = round((acertos / total_alunos) * 100, 1)
+        
+        # Identifica questão mais fácil e mais difícil
+        q_mais_facil = max(percentuais_questoes, key=percentuais_questoes.get) if percentuais_questoes else "N/A"
+        q_mais_dificil = min(percentuais_questoes, key=percentuais_questoes.get) if percentuais_questoes else "N/A"
+        
+        # Monta contexto para a IA
+        contexto_ia = f"""
+TURMA: {total_alunos} alunos
+MÉDIA GERAL: {media_turma}
+DISTRIBUIÇÃO POR NÍVEL SAEB:
+- Abaixo do Básico: {niveis_count['Abaixo do Básico']} alunos ({round(niveis_count['Abaixo do Básico']/total_alunos*100)}%)
+- Básico: {niveis_count['Básico']} alunos ({round(niveis_count['Básico']/total_alunos*100)}%)
+- Adequado: {niveis_count['Adequado']} alunos ({round(niveis_count['Adequado']/total_alunos*100)}%)
+- Avançado: {niveis_count['Avançado']} alunos ({round(niveis_count['Avançado']/total_alunos*100)}%)
+
+QUESTÃO COM MAIS ACERTOS: {q_mais_facil} ({percentuais_questoes.get(q_mais_facil, 0)}% de acerto)
+QUESTÃO COM MENOS ACERTOS: {q_mais_dificil} ({percentuais_questoes.get(q_mais_dificil, 0)}% de acerto)
+
+PERCENTUAL DE ACERTO POR QUESTÃO:
+{chr(10).join([f'{q}: {p}%' for q, p in sorted(percentuais_questoes.items())])}
+"""
+        
+        # Chama o Expert Analista de Desempenho
+        expert = EXPERTS_PEDAGOGICOS.get('analista_desempenho')
+        prompt_final = f"{expert['prompt_base']}\n\nDADOS/CONTEXTO:\n{contexto_ia}"
+        
+        payload = {
+            "contents": [{"parts": [{"text": prompt_final}]}],
+            "generationConfig": {"temperature": 0.7},
+        }
+        
+        resposta = _gemini_chamar(payload)
+        if isinstance(resposta, tuple) and len(resposta) >= 2:
+            texto_ia = resposta[0]
+            modelo = resposta[1]
+        else:
+            texto_ia = str(resposta) if resposta else "Falha ao gerar diagnóstico."
+            modelo = "gemini-2.0-flash"
+        
+        # Tenta extrair JSON, se falhar usa texto puro
+        data_result = _extrair_json_obj(texto_ia)
+        if data_result is None:
+            data_result = {"resposta_documento": texto_ia}
+        
+        return jsonify({
+            "sucesso": True,
+            "estatisticas": {
+                "total_alunos": total_alunos,
+                "media_turma": media_turma,
+                "niveis": niveis_count,
+                "percentuais_questoes": percentuais_questoes,
+                "q_mais_facil": q_mais_facil,
+                "q_mais_dificil": q_mais_dificil
+            },
+            "diagnostico_ia": data_result,
+            "alunos_resumo": alunos[:5]  # Só os 5 primeiros para não pesar
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+# ==========================================================
+# 🧮 MOTOR DE CLASSIFICAÇÃO AUTOMÁTICA
+# ==========================================================
+@app.route('/api/classificar_prova/<int:id_avaliacao>', methods=['POST'])
+def classificar_prova(id_avaliacao):
+    try:
+        # 1. Buscar todas as questões da prova com seus níveis e pesos
+        questoes_response = supabase.table('questoes').select('*').eq('id_avaliacao', id_avaliacao).execute()
+        questoes = questoes_response.data
+        
+        if not questoes:
+            return jsonify({"sucesso": False, "erro": "Nenhuma questão encontrada para esta prova."}), 404
+        
+        # Mapear questões por ID para facilitar acesso
+        questoes_map = {q['id']: q for q in questoes}
+        
+        # 2. Buscar todas as respostas dos alunos para esta prova
+        respostas_response = supabase.table('respostas').select('*').eq('id_avaliacao', id_avaliacao).execute()
+        respostas = respostas_response.data
+        
+        # 🆕 PROTEÇÃO: Buscar IDs de alunos válidos para evitar erro de chave estrangeira (alunos órfãos)
+        alunos_validos_response = supabase.table('alunos').select('id').execute()
+        ids_alunos_validos = {aluno['id'] for aluno in alunos_validos_response.data}
+        
+        # Filtrar respostas, mantendo apenas as de alunos que realmente existem no cadastro
+        respostas_filtradas = [resp for resp in respostas if resp['id_aluno'] in ids_alunos_validos]
+        
+        # 3. Agrupar respostas por aluno (usando a lista filtrada e segura)
+        respostas_por_aluno = {}
+        for resp in respostas_filtradas:
+            id_aluno = resp['id_aluno']
+            if id_aluno not in respostas_por_aluno:
+                respostas_por_aluno[id_aluno] = []
+            respostas_por_aluno[id_aluno].append(resp)
+        
+        # 🆕 LIMPEZA: Apaga resultados antigos desta prova para evitar erro de duplicidade
+        supabase.table('resultados').delete().eq('id_avaliacao', id_avaliacao).execute()
+        # 🆕 BUSCAR NOMES: Para o dashboard mostrar o nome e não apenas o ID
+        ids_para_buscar = list(respostas_por_aluno.keys())
+        if ids_para_buscar:
+            nomes_response = supabase.table('alunos').select('id, nome_completo').in_('id', ids_para_buscar).execute()
+            mapa_nomes = {aluno['id']: aluno['nome_completo'] for aluno in nomes_response.data}
+        else:
+            mapa_nomes = {}
+
+        # 4. Processar cada aluno
+        alunos_classificados = []
+        
+        for id_aluno, respostas_aluno in respostas_por_aluno.items():
+            nota_bruta = 0
+            acertos_basico = 0
+            acertos_intermediario = 0
+            acertos_avancado = 0
+            total_pontos_possiveis = 0
+            
+            # Calcular nota e acertos por nível
+            for resp in respostas_aluno:
+                id_questao = resp['id_questao']
+                if id_questao in questoes_map:
+                    questao = questoes_map[id_questao]
+                    peso = float(questao.get('peso', 1))
+                    nivel = questao.get('nivel', 'Básico')
+                    total_pontos_possiveis += peso
+                    
+                    if resp.get('correta', False):
+                        nota_bruta += peso
+                        
+                        # Contar acertos por nível
+                        if nivel == 'Básico':
+                            acertos_basico += 1
+                        elif nivel == 'Intermediário':
+                            acertos_intermediario += 1
+                        elif nivel == 'Avançado':
+                            acertos_avancado += 1
+            
+            # Calcular nota final (normalizada para 0-10)
+            if total_pontos_possiveis > 0:
+                nota_final = round((nota_bruta / total_pontos_possiveis) * 10, 2)
+            else:
+                nota_final = 0
+            
+            # Calcular percentual de acerto
+            total_questoes = len(respostas_aluno)
+            questoes_corretas = sum(1 for r in respostas_aluno if r.get('correta', False))
+            percentual_acerto = round((questoes_corretas / total_questoes * 100), 2) if total_questoes > 0 else 0
+            
+            # Classificar proficiência
+            nivel_saeb, devolutiva = classificar_proficiencia(nota_final)
+            
+            # Atualizar tabela de resultados
+            resultado_data = {
+                'id_avaliacao': id_avaliacao,
+                'id_aluno': id_aluno,
+                'nota_bruta': nota_bruta,
+                'nota_final': nota_final,
+                'nivel_saeb': nivel_saeb,
+                'devolutiva': devolutiva,
+                'acertos_basico': acertos_basico,
+                'acertos_intermediario': acertos_intermediario,
+                'acertos_avancado': acertos_avancado,
+                'percentual_acerto': percentual_acerto,
+                'data_correcao': 'now()'
+            }
+            
+            # Upsert (insere ou atualiza)
+            supabase.table('resultados').insert(resultado_data).execute()
+            
+            alunos_classificados.append({
+                'id_aluno': id_aluno,
+                'nome': mapa_nomes.get(id_aluno, f'Aluno ID {id_aluno}'), # 🆕 NOME AQUI
+                'nota_final': nota_final,
+                'nivel_saeb': nivel_saeb
+            })
+        
+        return jsonify({
+            "sucesso": True,
+            "mensagem": f"{len(alunos_classificados)} alunos classificados com sucesso!",
+            "alunos": alunos_classificados
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+        # ==========================================================
+# 📋 LISTAR AVALIAÇÕES (Para o menu suspenso)
+# ==========================================================
+@app.route('/api/listar_avaliacoes', methods=['GET'])
+def listar_avaliacoes():
+    try:
+        # Busca ID e Nome, ordenando do maior ID para o menor (mais recentes primeiro)
+        response = supabase.table('avaliacoes').select('id, nome').order('id', desc=True).execute()
+        
+        # Se não encontrar nada, retorna lista vazia em vez de erro
+        avaliacoes = response.data if response.data else []
+        
+        return jsonify({"sucesso": True, "avaliacoes": avaliacoes})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+# ==========================================================
+# 🚀 INICIALIZAÇÃO DO SERVIDOR
+# ==========================================================
+if __name__ == '__main__':
+    print("🚀 Servidor OMR rodando na porta 10000...")
+    app.run(port=10000, debug=True)
 
 # ==========================================================
 # 🏁 INICIALIZAÇÃO DO SERVIDOR

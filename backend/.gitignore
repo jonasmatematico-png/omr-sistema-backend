@@ -9,3 +9,6 @@ ENV/
 *.log
 credentials.json
 *.json
+variaveis.env
+.env
+*.env
