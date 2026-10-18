@@ -2952,164 +2952,140 @@ PERCENTUAL DE ACERTO POR QUESTÃO:
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 # ==========================================================
-# 🧮 MOTOR DE CLASSIFICAÇÃO AUTOMÁTICA
+# 🧮 MOTOR DE CLASSIFICAÇÃO AUTOMÁTICA (COM FILTRO DE TURMA)
 # ==========================================================
 @app.route('/api/classificar_prova/<int:id_avaliacao>', methods=['POST'])
 def classificar_prova(id_avaliacao):
     try:
-        # 1. Buscar todas as questões da prova com seus níveis e pesos
-        questoes_response = supabase.table('questoes').select('*').eq('id_avaliacao', id_avaliacao).execute()
-        questoes = questoes_response.data
+        # 1. Recebe o filtro de turma enviado pelo site
+        dados_recebidos = request.get_json() or {}
+        id_turma_filtro = dados_recebidos.get('id_turma')
+        print(f"🔍 DEBUG: Prova {id_avaliacao} | Filtro de Turma: {id_turma_filtro}")
+
+        # 2. Monta a consulta para buscar os ALUNOS
+        query_alunos = supabase.table('alunos').select('id, nome_completo, id_turma')
+
+        # Se uma turma foi selecionada, aplica o filtro AGORA (no banco de dados)
+        if id_turma_filtro:
+            query_alunos = query_alunos.eq('id_turma', int(id_turma_filtro))
+
+        response_alunos = query_alunos.execute()
+        alunos_lista = response_alunos.data
+
+        # 3. Organiza os alunos e corrige o nome para o site
+        alunos_dict = {}
+        for a in alunos_lista:
+            # O site espera 'nome', então copiamos o 'nome_completo' para 'nome'
+            a['nome'] = a.get('nome_completo', 'Aluno Desconhecido')
+            alunos_dict[a['id']] = a
+
+        if not alunos_dict:
+            return jsonify({"sucesso": True, "alunos": [], "msg": "Nenhum aluno encontrado nesta turma."})
+
+        # 4. Busca as RESPOSTAS apenas dos alunos dessa turma (muito mais rápido!)
+        ids_validos = list(alunos_dict.keys())
         
-        if not questoes:
-            return jsonify({"sucesso": False, "erro": "Nenhuma questão encontrada para esta prova."}), 404
+        respostas_resp = supabase.table('respostas').select('*')\
+            .eq('id_avaliacao', id_avaliacao)\
+            .in_('id_aluno', ids_validos)\
+            .execute()
         
-        # Mapear questões por ID para facilitar acesso
-        questoes_map = {q['id']: q for q in questoes}
-        
-        # 2. Buscar todas as respostas dos alunos para esta prova
-        respostas_response = supabase.table('respostas').select('*').eq('id_avaliacao', id_avaliacao).execute()
-        respostas = respostas_response.data
-        
-        # 🆕 PROTEÇÃO: Buscar IDs de alunos válidos para evitar erro de chave estrangeira (alunos órfãos)
-        alunos_validos_response = supabase.table('alunos').select('id').execute()
-        ids_alunos_validos = {aluno['id'] for aluno in alunos_validos_response.data}
-        
-        # Filtrar respostas, mantendo apenas as de alunos que realmente existem no cadastro
-        respostas_filtradas = [resp for resp in respostas if resp['id_aluno'] in ids_alunos_validos]
-        
-        # 3. Agrupar respostas por aluno (usando a lista filtrada e segura)
+        respostas = respostas_resp.data
+
+        # 5. Agrupar respostas por aluno
         respostas_por_aluno = {}
-        for resp in respostas_filtradas:
+        for resp in respostas:
             id_aluno = resp['id_aluno']
             if id_aluno not in respostas_por_aluno:
                 respostas_por_aluno[id_aluno] = []
             respostas_por_aluno[id_aluno].append(resp)
-        
-        # 🆕 LIMPEZA: Apaga resultados antigos desta prova para evitar erro de duplicidade
-        supabase.table('resultados').delete().eq('id_avaliacao', id_avaliacao).execute()
-        # 🆕 BUSCAR NOMES: Para o dashboard mostrar o nome e não apenas o ID
-        ids_para_buscar = list(respostas_por_aluno.keys())
-        if ids_para_buscar:
-            nomes_response = supabase.table('alunos').select('id, nome_completo').in_('id', ids_para_buscar).execute()
-            mapa_nomes = {aluno['id']: aluno['nome_completo'] for aluno in nomes_response.data}
-        else:
-            mapa_nomes = {}
 
-        # 4. Processar cada aluno
-        alunos_classificados = []
-        
-        for id_aluno, respostas_aluno in respostas_por_aluno.items():
-            nota_bruta = 0
-            acertos_basico = 0
-            acertos_intermediario = 0
-            acertos_avancado = 0
-            total_pontos_possiveis = 0
+        # 6. Processar cada aluno (calcular nota e classificar)
+        alunos_processados = []
+        for id_aluno, lista_respostas in respostas_por_aluno.items():
+            aluno_info = alunos_dict.get(id_aluno)
+            if not aluno_info:
+                continue
+
+            # Calcular nota (soma de acertos / total de questões * 10)
+            total_questoes = len(lista_respostas)
+            acertos = sum(1 for r in lista_respostas if r.get('correta') == True or r.get('acertou') == True)
             
-            # Calcular nota e acertos por nível
-            for resp in respostas_aluno:
-                id_questao = resp['id_questao']
-                if id_questao in questoes_map:
-                    questao = questoes_map[id_questao]
-                    peso = float(questao.get('peso', 1))
-                    nivel = questao.get('nivel', 'Básico')
-                    total_pontos_possiveis += peso
-                    
-                    if resp.get('correta', False):
-                        nota_bruta += peso
-                        
-                        # Contar acertos por nível
-                        if nivel == 'Básico':
-                            acertos_basico += 1
-                        elif nivel == 'Intermediário':
-                            acertos_intermediario += 1
-                        elif nivel == 'Avançado':
-                            acertos_avancado += 1
-            
-            # Calcular nota final (normalizada para 0-10)
-            if total_pontos_possiveis > 0:
-                nota_final = round((nota_bruta / total_pontos_possiveis) * 10, 2)
+            if total_questoes > 0:
+                nota_final = round((acertos / total_questoes) * 10, 1)
             else:
-                nota_final = 0
-            
-            # Calcular percentual de acerto
-            total_questoes = len(respostas_aluno)
-            questoes_corretas = sum(1 for r in respostas_aluno if r.get('correta', False))
-            percentual_acerto = round((questoes_corretas / total_questoes * 100), 2) if total_questoes > 0 else 0
-            
-            # Classificar proficiência
-            nivel_saeb, devolutiva = classificar_proficiencia(nota_final)
-            
-            # Atualizar tabela de resultados
-            resultado_data = {
-                'id_avaliacao': id_avaliacao,
-                'id_aluno': id_aluno,
-                'nota_bruta': nota_bruta,
+                nota_final = 0.0
+
+            # Classificar por nível SAEB (sua régua pedagógica)
+            if nota_final >= 7.5:
+                nivel_saeb = 'Avançado'
+            elif nota_final >= 5.0:
+                nivel_saeb = 'Adequado'
+            elif nota_final >= 2.5:
+                nivel_saeb = 'Básico'
+            else:
+                nivel_saeb = 'Abaixo do Básico'
+
+            alunos_processados.append({
+                'id': id_aluno,
+                'nome': aluno_info['nome'],
+                'id_turma': aluno_info.get('id_turma'),
                 'nota_final': nota_final,
-                'nivel_saeb': nivel_saeb,
-                'devolutiva': devolutiva,
-                'acertos_basico': acertos_basico,
-                'acertos_intermediario': acertos_intermediario,
-                'acertos_avancado': acertos_avancado,
-                'percentual_acerto': percentual_acerto,
-                'data_correcao': 'now()'
-            }
-            
-            # Upsert (insere ou atualiza)
-            supabase.table('resultados').insert(resultado_data).execute()
-            
-            alunos_classificados.append({
-                'id_aluno': id_aluno,
-                'nome': mapa_nomes.get(id_aluno, f'Aluno ID {id_aluno}'), # 🆕 NOME AQUI
-                'nota_final': nota_final,
+                'acertos': acertos,
+                'total_questoes': total_questoes,
                 'nivel_saeb': nivel_saeb
             })
-        
+
+        # 7. Retornar os dados para o site
         return jsonify({
             "sucesso": True,
-            "mensagem": f"{len(alunos_classificados)} alunos classificados com sucesso!",
-            "alunos": alunos_classificados
+            "alunos": alunos_processados,
+            "total_alunos": len(alunos_processados),
+            "turma_filtrada": id_turma_filtro
         })
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
-        # ==========================================================
-# 📋 LISTAR AVALIAÇÕES (Para o menu suspenso)
+# ==========================================================
+# 🏫 LISTAR TURMAS (COLOCADO JUNTO COM LISTAR AVALIAÇÕES)
+# ==========================================================
+@app.route('/api/listar_turmas', methods=['GET'])
+def listar_turmas():
+    try:
+        response = supabase.table('turmas').select('id, nome, serie').order('nome').execute()
+        turmas = response.data if response.data else []
+        return jsonify({"sucesso": True, "turmas": turmas})
+    except Exception as e:
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+# ==========================================================
+# 📋 LISTAR AVALIAÇÕES
 # ==========================================================
 @app.route('/api/listar_avaliacoes', methods=['GET'])
 def listar_avaliacoes():
     try:
-        # Busca ID e Nome, ordenando do maior ID para o menor (mais recentes primeiro)
         response = supabase.table('avaliacoes').select('id, nome').order('id', desc=True).execute()
-        
-        # Se não encontrar nada, retorna lista vazia em vez de erro
         avaliacoes = response.data if response.data else []
-        
         return jsonify({"sucesso": True, "avaliacoes": avaliacoes})
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 # ==========================================================
-# 🚀 INICIALIZAÇÃO DO SERVIDOR
-# ==========================================================
-if __name__ == '__main__':
-    print("🚀 Servidor OMR rodando na porta 10000...")
-    app.run(port=10000, debug=True)
-
-# ==========================================================
-# 🏁 INICIALIZAÇÃO DO SERVIDOR
+# 🚀 INICIALIZAÇÃO DO SERVIDOR (ÚNICO E CORRIGIDO)
 # ==========================================================
 if __name__ == '__main__':
     print("🚨🚨 OMR SISTEMA 2.0 - BACKEND COMPLETO 🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
     print(f"🔑 Gemini chaves: {len(GEMINI_CHAVES)} configurada(s)")
     print(f"🤖 Gemini modelos: {GEMINI_MODELOS}")
-    print(f"📄 Relatórios PDF: {'✅ ATIVOS' if PDF_OK else '❌ INATIVOS (instalar reportlab)'}")
+    print(f"📄 Relatórios PDF: {'✅ ATIVOS' if PDF_OK else '❌ INATIVOS'}")
+    
+    # Detecta a porta do Render ou usa 10000 localmente
     port = int(os.environ.get("PORT", 10000))
     print(f"📡 Servidor rodando na porta: {port}")
-    app.run(host='0.0.0.0', port=port, debug=False)
+    
+    # debug=True no PC ajuda a ver erros na hora. O Render ignora isso e usa produção.
+    app.run(host='0.0.0.0', port=port, debug=True)
