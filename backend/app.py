@@ -3050,15 +3050,53 @@ def classificar_prova(id_avaliacao):
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 # ==========================================================
-# 🏫 LISTAR TURMAS (COLOCADO JUNTO COM LISTAR AVALIAÇÕES)
+# 🏫 LISTAR TURMAS (COM FILTRO DE SEGURANÇA POR PROFESSOR)
 # ==========================================================
 @app.route('/api/listar_turmas', methods=['GET'])
 def listar_turmas():
     try:
-        response = supabase.table('turmas').select('id, nome, serie').order('nome').execute()
+        # 1. Pega o ID do usuário logado que veio do site
+        user_id = request.args.get('user_id')
+        
+        if not user_id:
+            return jsonify({"sucesso": False, "erro": "Usuário não identificado"}), 401
+
+        # 2. Busca o perfil do usuário no Supabase para ver seu tipo e suas turmas
+        # Nota: O Supabase usa 'id' na tabela perfis para ligar com o usuário autenticado
+        perfil_resp = supabase.table('perfis').select('tipo_usuario, turmas_id').eq('id', user_id).single().execute()
+        
+        if not perfil_resp.data:
+            return jsonify({"sucesso": False, "erro": "Perfil não encontrado no banco"}), 404
+
+        perfil = perfil_resp.data
+        tipo_usuario = perfil.get('tipo_usuario')
+        turmas_id = perfil.get('turmas_id')
+
+        # 3. Monta a consulta para buscar as turmas
+        query_turmas = supabase.table('turmas').select('id, nome, serie').order('nome')
+
+        # 4. Aplica o filtro de segurança
+        if tipo_usuario == 'professor':
+            if isinstance(turmas_id, list):
+                # Se o professor tiver várias turmas (array no banco)
+                query_turmas = query_turmas.in_('id', turmas_id)
+            elif turmas_id:
+                # Se o professor tiver apenas uma turma (ID único)
+                query_turmas = query_turmas.eq('id', turmas_id)
+            else:
+                # Professor sem turma vinculada
+                return jsonify({"sucesso": True, "turmas": [], "msg": "Nenhuma turma vinculada ao seu perfil."})
+        
+        # Se for 'coordenador' ou 'admin', a query roda sem filtro (mostra todas)
+
+        response = query_turmas.execute()
         turmas = response.data if response.data else []
+        
         return jsonify({"sucesso": True, "turmas": turmas})
+
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 # ==========================================================
