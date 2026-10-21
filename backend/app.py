@@ -43,7 +43,7 @@ CORS(app)
 # 🔑 CONFIGURAÇÃO DO SUPABASE
 # ==========================================================
 SUPABASE_URL = "https://mkqnaiuplkqiitwxltli.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1rcW5haXVwbGtxaWl0d3hsdGxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzOTg5MzMsImV4cCI6MjA5OTk3NDkzM30.65MoDC1gMNpNs6bCKZlCTyCn2ijaaA6y9DOnQgNxacA"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1rcW5haXVwbGtxaWl0d3hsdGxpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NDM5ODkzMywiZXhwIjoyMDk5OTc0OTMzfQ.MtrmkMjW9ODjl7FcNw6VIu8SJTeuewwmoFeiSSvRk1U"
 
 # Cliente Normal (Anon)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
