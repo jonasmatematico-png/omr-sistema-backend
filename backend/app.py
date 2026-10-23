@@ -3135,6 +3135,37 @@ def listar_avaliacoes():
     except Exception as e:
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
+     #  ==========================================================
+# 🚀 Rota processar imagem
+# ==========================================================
+@app.route('/api/processar_imagem_omr', methods=['POST'])
+def processar_imagem_omr():
+    try:
+        # 1. Recebe a imagem e os dados
+        imagem = request.files.get('imagem')
+        id_avaliacao = request.form.get('id_avaliacao')
+        id_aluno = request.form.get('id_aluno')
+
+        if not imagem:
+            return jsonify({"sucesso": False, "erro": "Nenhuma imagem enviada"}), 400
+
+        # 2. AQUI ENTRA SUA LÓGICA DE OMR (OpenCV, EasyOCR, ou chamada à IA de Visão)
+        # Exemplo simulado de sucesso:
+        resultado_simulado = {
+            "sucesso": True,
+            "nota": 8.5,
+            "acertos": 17,
+            "total_questoes": 20,
+            "detalhes": "Questões 1, 5 e 12 marcadas incorretamente."
+        }
+        
+        # 3. (Opcional) Salvar a nota no Supabase aqui
+        
+        return jsonify(resultado_simulado)
+
+    except Exception as e:
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
 # ==========================================================
 # 🚀 INICIALIZAÇÃO DO SERVIDOR (ÚNICO E CORRIGIDO)
 # ==========================================================
