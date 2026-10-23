@@ -77,21 +77,23 @@ def criar_professor():
     try:
         dados = request.get_json() or {}
         nome = dados.get('nome')
-        email = dados.get('email')
+        email_bruto = dados.get('email') # Pegamos o e-mail bruto primeiro
         senha = dados.get('senha')
         tipo_usuario = dados.get('tipo_usuario', 'professor')
+
+        # 🛡️ BLINDAGEM: Limpar o e-mail (remove espaços no início/fim e deixa minúsculo)
+        email = str(email_bruto).strip().lower() if email_bruto else ""
 
         if not nome or not email or not senha:
             return jsonify({"sucesso": False, "erro": "Nome, e-mail e senha são obrigatórios."}), 400
 
-        # 🚨 IMPORTANTE: Usar o cliente ADMIN (Service Role) para criar usuários
-        # Certifique-se de que esta variável está definida no topo do seu app.py:
-        # supabase_admin = create_client(SUPABASE_URL, os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
-        
+        # Log para o Render (ajuda a ver exatamente o que está chegando)
+        print(f"🔍 [DEBUG GESTÃO] Tentando criar usuário com e-mail: '{email}'")
+
         try:
             # Tenta criar o usuário no Auth do Supabase
             auth_response = supabase_admin.auth.admin.create_user({
-                "email": email,
+                "email": email, # Agora enviamos o e-mail LIMPO
                 "password": senha,
                 "email_confirm": True, # Já confirma o e-mail automaticamente
                 "user_metadata": {
@@ -102,10 +104,10 @@ def criar_professor():
             
             user_id = auth_response.user.id
             
-            # 🆕 Usa UPSERT: Insere se não existir, ou atualiza se já existir (evita erro 23505)
+            # 🆕 Usa UPSERT: Insere se não existir, ou atualiza se já existir
             supabase_admin.table("perfis").upsert({
                 "id": user_id,
-                "email": email,
+                "email": email, # E-mail limpo aqui também
                 "nome_completo": nome,
                 "tipo_usuario": tipo_usuario,
                 "turmas_id": [] # Começa sem turmas, o admin atribui depois
@@ -120,7 +122,6 @@ def criar_professor():
             
         except Exception as auth_err:
             print(f"❌ Erro Supabase Auth: {auth_err}")
-            # Se o erro for "User already registered", tratamos de forma amigável
             if "already registered" in str(auth_err).lower():
                 return jsonify({"sucesso": False, "erro": "Este e-mail já está cadastrado no sistema."}), 400
             return jsonify({"sucesso": False, "erro": f"Erro ao criar usuário: {str(auth_err)}"}), 500
