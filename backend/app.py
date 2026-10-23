@@ -1838,6 +1838,29 @@ def gerar_questoes():
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
+@app.route('/api/identificar_habilidade', methods=['POST'])
+def identificar_habilidade():
+    try:
+        from flask import request
+        data = request.json
+        texto = data.get("texto", "")
+        fonte = data.get("fonte", "CP")
+        componente = data.get("componente", "Matemática")
+        ano = data.get("ano", 6)
+        
+        # AQUI VOCÊ COLOCA SUA CHAMADA REAL À IA
+        resultados = [
+            {
+                "codigo": "D25", 
+                "aderencia": 95, 
+                "justificativa": "A questão aborda a interpretação de enunciados, típica deste descritor."
+            }
+        ]
+        
+        return {"sucesso": True, "resultados": resultados}
+    except Exception as e:
+        return {"sucesso": False, "erro": str(e)}
+
 # ==========================================================
 # 🚀 NOVO: PLANEJADOR DE AULA PASSO A PASSO COM IA
 # ==========================================================
