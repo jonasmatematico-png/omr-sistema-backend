@@ -56,6 +56,36 @@ def corrigir():
         else:
             return jsonify({'erro': 'Nenhum arquivo de foto recebido.'}), 400
 
+        # ==========================================
+        # 🆕 LEITURA AUTOMÁTICA DO QR CODE DA IMAGEM
+        # ==========================================
+        print("🔍 Tentando ler QR Code da imagem...")
+        img_cv = cv2.imread(foto_path)
+        
+        if img_cv is None:
+            return jsonify({'erro': 'Falha ao carregar a imagem no servidor.'}), 500
+            
+        decoded_objects = decode(img_cv)
+        
+        if not decoded_objects:
+            return jsonify({'erro': 'QR Code não encontrado na imagem. Verifique a iluminação e se o QR está visível.'}), 400
+            
+        qr_data = decoded_objects[0].data.decode('utf-8')
+        print(f"📱 QR Code lido: {qr_data}")
+        
+        # Formato gerado pelo seu app: OMRALUNO:{id_prova}:{id_aluno}
+        partes = qr_data.split(':')
+        if len(partes) >= 3 and partes[0] == 'OMRALUNO':
+            id_avaliacao = int(partes[1])
+            id_aluno = int(partes[2])
+            print(f"✅ Sucesso! Avaliação: {id_avaliacao}, Aluno: {id_aluno}")
+        else:
+            return jsonify({'erro': f'Formato de QR Code inválido: {qr_data}'}), 400
+            
+        # A partir daqui, o código original do seu OMR continua funcionando 
+        # pois as variáveis id_aluno e id_avaliacao agora estão preenchidas!
+            
+
         # 🔹 3. Pega o Gabarito Oficial
         gabarito_recebido = ['A', 'B', 'C', 'D', 'A', 'B', 'C', 'D', 'A', 'B']
         if 'gabarito' in request.form:
