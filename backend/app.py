@@ -3135,8 +3135,8 @@ def listar_avaliacoes():
     except Exception as e:
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
-     #  ==========================================================
-# 🚀 Rota processar imagem
+#  ==========================================================
+# 🚀 Rota processar imagem HTML
 # ==========================================================
 @app.route('/api/processar_imagem_omr', methods=['POST'])
 def processar_imagem_omr():
@@ -3164,6 +3164,84 @@ def processar_imagem_omr():
         return jsonify(resultado_simulado)
 
     except Exception as e:
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+    
+# ==========================================================
+# 🚀 ROTA IMAGEM PARA CORETOR DISERTATIVA HTML
+# ==========================================================
+
+import cv2
+import numpy as np
+from pyzbar import pyzbar
+
+@app.route('/api/corrigir_por_foto_qr', methods=['POST'])
+def corrigir_por_foto_qr():
+    try:
+        imagem = request.files.get('imagem')
+        qr_data = request.form.get('qr_data')
+
+        if not imagem or not qr_data:
+            return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
+
+        # 1. Parseia o QR code (formato esperado: "OMRALUNO:{id_prova}:{id_aluno}")
+        partes = qr_data.split(':')
+        if len(partes) != 3 or partes[0] != 'OMRALUNO':
+            return jsonify({"sucesso": False, "erro": "QR Code inválido"}), 400
+
+        id_prova = int(partes[1])
+        id_aluno = int(partes[2])
+
+        # 2. Busca os dados da prova e do aluno no Supabase
+        prova = supabase_admin.table('avaliacoes').select('nome,numero_questoes').eq('id', id_prova).execute()
+        aluno = supabase_admin.table('alunos').select('nome_completo').eq('id', id_aluno).execute()
+
+        if not prova.data or not aluno.data:
+            return jsonify({"sucesso": False, "erro": "Prova ou aluno não encontrado"}), 404
+
+        nome_prova = prova.data[0]['nome']
+        nome_aluno = aluno.data[0]['nome_completo']
+        total_questoes = prova.data[0]['numero_questoes']
+
+        # 3. Busca o gabarito da prova
+        questoes = supabase_admin.table('questoes').select('numero,gabarito').eq('id_avaliacao', id_prova).execute()
+        gabarito = {q['numero']: q['gabarito'] for q in questoes.data if q.get('gabarito')}
+
+        # 4. AQUI ENTRA SUA LÓGICA DE OMR (OpenCV para ler as marcações da imagem)
+        # Por enquanto, vamos simular uma correção:
+        # Em produção, você usaria OpenCV para detectar as bolinhas marcadas
+        
+        # SIMULAÇÃO (substitua pela lógica real de OMR):
+        respostas_aluno = {1: 'A', 2: 'B', 3: 'C', 4: 'A', 5: 'D'}  # Exemplo
+        acertos = sum(1 for num, resp in respostas_aluno.items() if gabarito.get(num) == resp)
+        nota = (acertos / total_questoes) * 10
+
+        detalhes = []
+        for num in range(1, min(total_questoes + 1, 6)):  # Mostra só as 5 primeiras
+            resp_aluno = respostas_aluno.get(num, '-')
+            resp_gabarito = gabarito.get(num, '-')
+            detalhes.append({
+                "numero": num,
+                "resposta_aluno": resp_aluno,
+                "resposta_gabarito": resp_gabarito,
+                "correta": resp_aluno == resp_gabarito
+            })
+
+        return jsonify({
+            "sucesso": True,
+            "id_aluno": id_aluno,
+            "id_prova": id_prova,
+            "nome_aluno": nome_aluno,
+            "nome_prova": nome_prova,
+            "nota": round(nota, 1),
+            "nota_maxima": 10,
+            "acertos": acertos,
+            "total_questoes": total_questoes,
+            "detalhes": detalhes
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 # ==========================================================
