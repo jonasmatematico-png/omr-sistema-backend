@@ -129,7 +129,46 @@ def criar_professor():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"sucesso": False, "erro": str(e)}), 500
+        return jsonify({"sucesso": False, "erro": str(e)}), 500# ========================================================================
+# 📄 ROTA: Consultar número de páginas de uma prova
+# Usado pelo Corretor por Foto para saber quantas fotos esperar
+# ========================================================================
+@app.route('/api/numero_paginas_prova/<int:id_prova>', methods=['GET'])
+def numero_paginas_prova(id_prova):
+    try:
+        # Consulta o Supabase
+        result = supabase_admin.table('avaliacoes') \
+            .select('id, nome, numero_paginas') \
+            .eq('id', id_prova) \
+            .execute()
+        
+        # Se não encontrar a prova
+        if not result.data or len(result.data) == 0:
+            return jsonify({
+                "sucesso": False, 
+                "erro": f"Prova com ID {id_prova} não encontrada"
+            }), 404
+        
+        prova = result.data[0]
+        
+        # Garante que sempre retorna pelo menos 1 página
+        numero_paginas = prova.get('numero_paginas') or 1
+        
+        return jsonify({
+            "sucesso": True,
+            "id_prova": id_prova,
+            "nome_prova": prova.get('nome'),
+            "numero_paginas": numero_paginas
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "sucesso": False, 
+            "erro": f"Erro ao consultar número de páginas: {str(e)}"
+        }), 500
+
 
 # ==========================================================
 # 🤖 CONFIGURAÇÃO DO GEMINI (MATRIZ ANTI-COTA: chaves × modelos!)
