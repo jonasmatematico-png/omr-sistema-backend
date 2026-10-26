@@ -3209,9 +3209,9 @@ def processar_imagem_omr():
 # 🚀 ROTA IMAGEM PARA CORETOR DISERTATIVA HTML
 # ==========================================================
 
-import cv2
+#import cv2
 import numpy as np
-from pyzbar import pyzbar
+#from pyzbar import pyzbar
 
 @app.route('/api/corrigir_por_foto_qr', methods=['POST'])
 def corrigir_por_foto_qr():
