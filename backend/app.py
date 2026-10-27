@@ -3283,7 +3283,7 @@ def corrigir_por_foto_qr():
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
-        # ========================================================================
+# ========================================================================
 # 👤 ROTA: Buscar dados completos do aluno (com turma)
 # Usado na tela de revisão antes de enviar para correção
 # ========================================================================
