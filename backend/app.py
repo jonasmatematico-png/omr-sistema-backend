@@ -3283,53 +3283,6 @@ def corrigir_por_foto_qr():
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
-# ========================================================================
-# 👤 ROTA: Buscar dados completos do aluno (com turma)
-# ========================================================================
-@app.route('/api/dados_aluno/<int:id_aluno>', methods=['GET'])
-def dados_aluno(id_aluno):
-    try:
-        # 1. Tenta buscar o aluno na tabela 'alunos'
-        aluno = supabase_admin.table('alunos') \
-            .select('id, nome_completo, numero_chamada, id_turma') \
-            .eq('id', id_aluno) \
-            .execute()
-        
-        if not aluno.data:
-            return jsonify({
-                "sucesso": False, 
-                "erro": f"Aluno {id_aluno} não encontrado"
-            }), 404
-        
-        aluno_info = aluno.data[0]
-        id_turma = aluno_info.get('id_turma')
-        
-        # 2. Busca o nome da turma na tabela 'turmas'
-        nome_turma = "Sem turma"
-        if id_turma:
-            turma = supabase_admin.table('turmas') \
-                .select('nome') \
-                .eq('id', id_turma) \
-                .execute()
-            if turma.data and len(turma.data) > 0:
-                nome_turma = turma.data[0]['nome']
-        
-        return jsonify({
-            "sucesso": True,
-            "nome_completo": aluno_info['nome_completo'],
-            "numero_chamada": aluno_info['numero_chamada'],
-            "nome_turma": nome_turma,
-            "id_aluno": id_aluno
-        })
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            "sucesso": False, 
-            "erro": f"Erro ao buscar dados do aluno: {str(e)}"
-        }), 500
-
 # ==========================================================
 # 🚀 INICIALIZAÇÃO DO SERVIDOR (ÚNICO E CORRIGIDO)
 # ==========================================================
