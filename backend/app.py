@@ -3283,6 +3283,71 @@ def corrigir_por_foto_qr():
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
+        # ========================================================================
+# 👤 ROTA: Buscar dados completos do aluno (com turma)
+# Usado na tela de revisão antes de enviar para correção
+# ========================================================================
+@app.route('/api/dados_aluno/<int:id_aluno>', methods=['GET'])
+def dados_aluno(id_aluno):
+    try:
+        # Query que você já tem funcionando
+        result = supabase_admin.rpc('get_dados_aluno_turma', {
+            'p_id_aluno': id_aluno
+        }).execute()
+        
+        # Se a RPC não existir, tenta query direta com JOIN
+        if not result.data:
+            # Tenta buscar aluno primeiro
+            aluno = supabase_admin.table('alunos') \
+                .select('id, nome_completo, numero_chamada, id_turma') \
+                .eq('id', id_aluno) \
+                .execute()
+            
+            if not aluno.data:
+                return jsonify({
+                    "sucesso": False, 
+                    "erro": f"Aluno {id_aluno} não encontrado"
+                }), 404
+            
+            aluno_info = aluno.data[0]
+            id_turma = aluno_info.get('id_turma')
+            
+            # Busca nome da turma
+            if id_turma:
+                turma = supabase_admin.table('turmas') \
+                    .select('nome') \
+                    .eq('id', id_turma) \
+                    .execute()
+                nome_turma = turma.data[0]['nome'] if turma.data else "Turma não encontrada"
+            else:
+                nome_turma = "Sem turma"
+            
+            return jsonify({
+                "sucesso": True,
+                "nome_completo": aluno_info['nome_completo'],
+                "numero_chamada": aluno_info['numero_chamada'],
+                "nome_turma": nome_turma,
+                "id_aluno": id_aluno
+            })
+        
+        # Se a RPC funcionou
+        dados = result.data[0] if result.data else {}
+        return jsonify({
+            "sucesso": True,
+            "nome_completo": dados.get('nome_completo'),
+            "numero_chamada": dados.get('numero_chamada'),
+            "nome_turma": dados.get('nome_turma'),
+            "id_aluno": id_aluno
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "sucesso": False, 
+            "erro": f"Erro ao buscar dados do aluno: {str(e)}"
+        }), 500
+
 # ==========================================================
 # 🚀 INICIALIZAÇÃO DO SERVIDOR (ÚNICO E CORRIGIDO)
 # ==========================================================
