@@ -3286,8 +3286,9 @@ def corrigir_por_foto_qr():
 # ========================================================================
 # 👤 ROTA: Buscar dados completos do aluno (com turma)
 # ========================================================================
-@app.route('/api/dados_aluno/<int:numero_chamada>/<int:id_prova>', methods=['GET'])
-def dados_aluno(numero_chamada, id_prova):
+@app.route('/api/dados_aluno/<int:id_aluno>', methods=['GET'])
+def dados_aluno(id_aluno):
+    # ... código que busca no Supabase
     try:
         # Busca o aluno pelo NÚMERO DE CHAMADA, não pelo ID
         aluno = supabase_admin.table('alunos') \
