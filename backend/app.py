@@ -3283,6 +3283,39 @@ def corrigir_por_foto_qr():
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
+@app.route('/api/dados_aluno/<int:id_aluno>', methods=['GET'])
+def dados_aluno(id_aluno):
+    try:
+        # Busca dados do aluno
+        aluno = supabase_admin.table('alunos') \
+            .select('id, nome_completo, numero_chamada, id_turma') \
+            .eq('id', id_aluno) \
+            .execute()
+        
+        if not aluno.data:
+            return jsonify({"sucesso": False, "erro": "Aluno não encontrado"}), 404
+        
+        aluno_info = aluno.data[0]
+        
+        # Busca nome da turma
+        nome_turma = "Turma não encontrada"
+        if aluno_info.get('id_turma'):
+            turma = supabase_admin.table('turmas') \
+                .select('nome') \
+                .eq('id', aluno_info['id_turma']) \
+                .execute()
+            if turma.data:
+                nome_turma = turma.data[0]['nome']
+        
+        return jsonify({
+            "sucesso": True,
+            "nome_completo": aluno_info['nome_completo'],
+            "numero_chamada": aluno_info['numero_chamada'],
+            "nome_turma": nome_turma
+        })
+    except Exception as e:
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
 # ==========================================================
 # 🚀 INICIALIZAÇÃO DO SERVIDOR (ÚNICO E CORRIGIDO)
 # ==========================================================
