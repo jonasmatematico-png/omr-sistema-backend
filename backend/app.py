@@ -3286,24 +3286,24 @@ def corrigir_por_foto_qr():
 # ========================================================================
 # 👤 ROTA: Buscar dados completos do aluno (com turma)
 # ========================================================================
-@app.route('/api/dados_aluno/<int:numero_chamada>/<int:id_prova>', methods=['GET'])
-def dados_aluno(numero_chamada, id_prova):
+@app.route('/api/dados_aluno/<int:id_aluno>', methods=['GET'])
+def dados_aluno(id_aluno):
     try:
-        # Busca o aluno pelo NÚMERO DE CHAMADA, não pelo ID
+        # 1. Busca o aluno na tabela 'alunos'
         aluno = supabase_admin.table('alunos') \
             .select('id, nome_completo, numero_chamada, id_turma') \
-            .eq('numero_chamada', numero_chamada) \
+            .eq('id', id_aluno) \
             .execute()
         
         if not aluno.data:
             return jsonify({
                 "sucesso": False, 
-                "erro": f"Aluno com número {numero_chamada} não encontrado"
+                "erro": f"Aluno {id_aluno} não encontrado"
             }), 404
         
         aluno_info = aluno.data[0]
         
-        # Busca nome da turma
+        # 2. Busca o nome da turma na tabela 'turmas'
         nome_turma = "Turma não encontrada"
         if aluno_info.get('id_turma'):
             turma = supabase_admin.table('turmas') \
@@ -3315,11 +3315,10 @@ def dados_aluno(numero_chamada, id_prova):
         
         return jsonify({
             "sucesso": True,
-            "id_aluno": aluno_info['id'],
             "nome_completo": aluno_info['nome_completo'],
             "numero_chamada": aluno_info['numero_chamada'],
             "nome_turma": nome_turma,
-            "id_prova": id_prova
+            "id_aluno": id_aluno
         })
         
     except Exception as e:
