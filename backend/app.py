@@ -3216,26 +3216,22 @@ import numpy as np
 @app.route('/api/corrigir_por_foto_qr', methods=['POST'])
 def corrigir_por_foto_qr():
     try:
-        # Recebe dados em formato JSON (não multipart/form-data)
         data = request.json
         
-        fotos = data.get('fotos')  # Array de imagens base64
+        fotos = data.get('fotos')
         id_aluno = data.get('id_aluno')
         id_prova = data.get('id_prova')
         
-        # Validação
         if not fotos or not id_aluno or not id_prova:
             return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
         
-        if not isinstance(fotos, list) or len(fotos) == 0:
-            return jsonify({"sucesso": False, "erro": "Nenhuma foto enviada"}), 400
-        
-        # Busca os dados da prova e do aluno no Supabase
+        # Busca dados da prova
         prova = supabase_admin.table('avaliacoes') \
-            .select('nome, numero_questoes') \
+            .select('nome, numero_questoes, valor_por_questao') \
             .eq('id', id_prova) \
             .execute()
         
+        # Busca dados do aluno
         aluno = supabase_admin.table('alunos') \
             .select('nome_completo') \
             .eq('id', id_aluno) \
@@ -3247,51 +3243,24 @@ def corrigir_por_foto_qr():
         nome_prova = prova.data[0]['nome']
         nome_aluno = aluno.data[0]['nome_completo']
         total_questoes = prova.data[0]['numero_questoes']
+        valor_por_questao = prova.data[0].get('valor_por_questao', 1.0)
         
-        # Busca o gabarito da prova
-        questoes = supabase_admin.table('questoes') \
-            .select('numero, gabarito') \
+        # Busca critérios de correção da tabela questoes_abertas
+        questoes = supabase_admin.table('questoes_abertas') \
+            .select('numero, enunciado, criterios_correcao, palavras_chave') \
             .eq('id_avaliacao', id_prova) \
+            .order('numero') \
             .execute()
         
-        gabarito = {q['numero']: q['gabarito'] for q in questoes.data if q.get('gabarito')}
-        
-        # ============================================================
-        # AQUI ENTRA SUA LÓGICA DE OMR (OpenCV para ler as marcações)
-        # Por enquanto, vamos SIMULAR uma correção para testar o fluxo
-        # ============================================================
-        
-        # SIMULAÇÃO: respostas aleatórias (substituir pela lógica real de OMR)
-        import random
-        respostas_aluno = {}
-        for num in range(1, total_questoes + 1):
-            respostas_aluno[num] = random.choice(['A', 'B', 'C', 'D', 'E'])
-        
-        # Calcula acertos
-        acertos = sum(1 for num, resp in respostas_aluno.items() if gabarito.get(num) == resp)
-        nota = (acertos / total_questoes) * 10 if total_questoes > 0 else 0
-        
-        # Monta detalhes (mostra todas as questões)
-        detalhes = []
-        for num in range(1, total_questoes + 1):
-            resp_aluno = respostas_aluno.get(num, '-')
-            resp_gabarito = gabarito.get(num, '-')
-            detalhes.append({
-                "numero": num,
-                "resposta_aluno": resp_aluno,
-                "resposta_gabarito": resp_gabarito,
-                "correta": resp_aluno == resp_gabarito
-            })
-        
-        # Salva o resultado no banco (opcional, mas recomendado)
-        # supabase_admin.table('resultados').insert({
-        #     'id_aluno': id_aluno,
-        #     'id_prova': id_prova,
-        #     'nota': round(nota, 1),
-        #     'acertos': acertos,
-        #     'total_questoes': total_questoes,
-        #     'data_correcao': datetime.now().isoformat()
-        # }).execute()
+        criterios = []
+        if questoes.data:
+            for q in questoes.data:
+                criterios.append({
+                    "numero": q['numero'],
+                    "enunciado": q.get('enunciado', ''),
+                    "criterios_correcao": q.get('criterios_correcao', ''),
+                    "palavras_chave": q.get('palavras_chave', '')
+                })
         
         return jsonify({
             "sucesso": True,
@@ -3299,12 +3268,45 @@ def corrigir_por_foto_qr():
             "id_prova": id_prova,
             "nome_aluno": nome_aluno,
             "nome_prova": nome_prova,
-            "nota": round(nota, 1),
-            "nota_maxima": 10,
-            "acertos": acertos,
             "total_questoes": total_questoes,
-            "detalhes": detalhes,
+            "valor_por_questao": valor_por_questao,
+            "criterios": criterios,
             "total_fotos": len(fotos)
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+
+# Nova rota para salvar a correção final após aprovação do professor
+@app.route('/api/salvar_correcao', methods=['POST'])
+def salvar_correcao():
+    try:
+        data = request.json
+        
+        id_aluno = data.get('id_aluno')
+        id_prova = data.get('id_prova')
+        notas_questoes = data.get('notas_questoes')  # Lista de {numero, nota, comentario}
+        nota_final = data.get('nota_final')
+        
+        if not id_aluno or not id_prova or not notas_questoes:
+            return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
+        
+        # Salva na tabela de resultados
+        resultado = supabase_admin.table('resultados').insert({
+            'id_aluno': id_aluno,
+            'id_prova': id_prova,
+            'nota_final': nota_final,
+            'notas_detalhadas': notas_questoes,
+            'data_correcao': datetime.now().isoformat(),
+            'status': 'aprovado'
+        }).execute()
+        
+        return jsonify({
+            "sucesso": True,
+            "id_resultado": resultado.data[0]['id'] if resultado.data else None
         })
         
     except Exception as e:
