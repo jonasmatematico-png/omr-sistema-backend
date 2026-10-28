@@ -3250,18 +3250,15 @@ def corrigir_por_foto_qr():
             .eq('id_avaliacao', id_prova) \
             .order('numero') \
             .execute()
-        
+
         criterios = []
-        valor_total = 0
         if questoes.data:
             for q in questoes.data:
-                valor_questao = float(q.get('valor', 0))
-                valor_total += valor_questao
                 criterios.append({
                     "numero": q['numero'],
                     "enunciado": q.get('enunciado', ''),
-                    "criterios_correcao": q.get('resposta_esperada', ''),
-                    "valor": valor_questao,
+                    "criterios_correcao": q.get('resposta_esperada', ''),  # ← Isso deve vir do banco!
+                    "valor": float(q.get('valor', 0)),
                     "habilidade_codigo": q.get('habilidade_codigo', ''),
                     "descritor_codigo": q.get('descritor_codigo', '')
                 })
