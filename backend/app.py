@@ -3225,9 +3225,9 @@ def corrigir_por_foto_qr():
         if not fotos or not id_aluno or not id_prova:
             return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
         
-        # Busca dados da prova
+        # Busca dados da prova (SEM valor_por_questao)
         prova = supabase_admin.table('avaliacoes') \
-            .select('nome, numero_questoes, valor_por_questao') \
+            .select('nome, numero_questoes') \
             .eq('id', id_prova) \
             .execute()
         
@@ -3243,7 +3243,9 @@ def corrigir_por_foto_qr():
         nome_prova = prova.data[0]['nome']
         nome_aluno = aluno.data[0]['nome_completo']
         total_questoes = prova.data[0]['numero_questoes']
-        valor_por_questao = prova.data[0].get('valor_por_questao', 1.0)
+        
+        # Calcula valor por questão automaticamente (nota máxima 10)
+        valor_por_questao = 10.0 / total_questoes if total_questoes > 0 else 1.0
         
         # Busca critérios de correção da tabela questoes_abertas
         questoes = supabase_admin.table('questoes_abertas') \
@@ -3269,7 +3271,7 @@ def corrigir_por_foto_qr():
             "nome_aluno": nome_aluno,
             "nome_prova": nome_prova,
             "total_questoes": total_questoes,
-            "valor_por_questao": valor_por_questao,
+            "valor_por_questao": round(valor_por_questao, 2),
             "criterios": criterios,
             "total_fotos": len(fotos)
         })
