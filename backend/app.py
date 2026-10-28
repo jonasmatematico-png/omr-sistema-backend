@@ -3225,7 +3225,7 @@ def corrigir_por_foto_qr():
         if not fotos or not id_aluno or not id_prova:
             return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
         
-        # Busca dados da prova (SEM valor_por_questao)
+        # Busca dados da prova
         prova = supabase_admin.table('avaliacoes') \
             .select('nome, numero_questoes') \
             .eq('id', id_prova) \
@@ -3244,24 +3244,26 @@ def corrigir_por_foto_qr():
         nome_aluno = aluno.data[0]['nome_completo']
         total_questoes = prova.data[0]['numero_questoes']
         
-        # Calcula valor por questão automaticamente (nota máxima 10)
-        valor_por_questao = 10.0 / total_questoes if total_questoes > 0 else 1.0
-        
         # Busca critérios de correção da tabela questoes_abertas
         questoes = supabase_admin.table('questoes_abertas') \
-            .select('numero, enunciado, criterios_correcao, palavras_chave') \
+            .select('numero, enunciado, resposta_esperada, valor, habilidade_codigo, descritor_codigo') \
             .eq('id_avaliacao', id_prova) \
             .order('numero') \
             .execute()
         
         criterios = []
+        valor_total = 0
         if questoes.data:
             for q in questoes.data:
+                valor_questao = float(q.get('valor', 0))
+                valor_total += valor_questao
                 criterios.append({
                     "numero": q['numero'],
                     "enunciado": q.get('enunciado', ''),
-                    "criterios_correcao": q.get('criterios_correcao', ''),
-                    "palavras_chave": q.get('palavras_chave', '')
+                    "criterios_correcao": q.get('resposta_esperada', ''),
+                    "valor": valor_questao,
+                    "habilidade_codigo": q.get('habilidade_codigo', ''),
+                    "descritor_codigo": q.get('descritor_codigo', '')
                 })
         
         return jsonify({
@@ -3271,7 +3273,7 @@ def corrigir_por_foto_qr():
             "nome_aluno": nome_aluno,
             "nome_prova": nome_prova,
             "total_questoes": total_questoes,
-            "valor_por_questao": round(valor_por_questao, 2),
+            "valor_total_prova": round(valor_total, 2),
             "criterios": criterios,
             "total_fotos": len(fotos)
         })
