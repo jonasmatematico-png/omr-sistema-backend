@@ -3216,46 +3216,64 @@ import numpy as np
 @app.route('/api/corrigir_por_foto_qr', methods=['POST'])
 def corrigir_por_foto_qr():
     try:
-        imagem = request.files.get('imagem')
-        qr_data = request.form.get('qr_data')
-
-        if not imagem or not qr_data:
+        # Recebe dados em formato JSON (não multipart/form-data)
+        data = request.json
+        
+        fotos = data.get('fotos')  # Array de imagens base64
+        id_aluno = data.get('id_aluno')
+        id_prova = data.get('id_prova')
+        
+        # Validação
+        if not fotos or not id_aluno or not id_prova:
             return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
-
-        # 1. Parseia o QR code (formato esperado: "OMRALUNO:{id_prova}:{id_aluno}")
-        partes = qr_data.split(':')
-        if len(partes) != 3 or partes[0] != 'OMRALUNO':
-            return jsonify({"sucesso": False, "erro": "QR Code inválido"}), 400
-
-        id_prova = int(partes[1])
-        id_aluno = int(partes[2])
-
-        # 2. Busca os dados da prova e do aluno no Supabase
-        prova = supabase_admin.table('avaliacoes').select('nome,numero_questoes').eq('id', id_prova).execute()
-        aluno = supabase_admin.table('alunos').select('nome_completo').eq('id', id_aluno).execute()
-
+        
+        if not isinstance(fotos, list) or len(fotos) == 0:
+            return jsonify({"sucesso": False, "erro": "Nenhuma foto enviada"}), 400
+        
+        # Busca os dados da prova e do aluno no Supabase
+        prova = supabase_admin.table('avaliacoes') \
+            .select('nome, numero_questoes') \
+            .eq('id', id_prova) \
+            .execute()
+        
+        aluno = supabase_admin.table('alunos') \
+            .select('nome_completo') \
+            .eq('id', id_aluno) \
+            .execute()
+        
         if not prova.data or not aluno.data:
             return jsonify({"sucesso": False, "erro": "Prova ou aluno não encontrado"}), 404
-
+        
         nome_prova = prova.data[0]['nome']
         nome_aluno = aluno.data[0]['nome_completo']
         total_questoes = prova.data[0]['numero_questoes']
-
-        # 3. Busca o gabarito da prova
-        questoes = supabase_admin.table('questoes').select('numero,gabarito').eq('id_avaliacao', id_prova).execute()
-        gabarito = {q['numero']: q['gabarito'] for q in questoes.data if q.get('gabarito')}
-
-        # 4. AQUI ENTRA SUA LÓGICA DE OMR (OpenCV para ler as marcações da imagem)
-        # Por enquanto, vamos simular uma correção:
-        # Em produção, você usaria OpenCV para detectar as bolinhas marcadas
         
-        # SIMULAÇÃO (substitua pela lógica real de OMR):
-        respostas_aluno = {1: 'A', 2: 'B', 3: 'C', 4: 'A', 5: 'D'}  # Exemplo
+        # Busca o gabarito da prova
+        questoes = supabase_admin.table('questoes') \
+            .select('numero, gabarito') \
+            .eq('id_avaliacao', id_prova) \
+            .execute()
+        
+        gabarito = {q['numero']: q['gabarito'] for q in questoes.data if q.get('gabarito')}
+        
+        # ============================================================
+        # AQUI ENTRA SUA LÓGICA DE OMR (OpenCV para ler as marcações)
+        # Por enquanto, vamos SIMULAR uma correção para testar o fluxo
+        # ============================================================
+        
+        # SIMULAÇÃO: respostas aleatórias (substituir pela lógica real de OMR)
+        import random
+        respostas_aluno = {}
+        for num in range(1, total_questoes + 1):
+            respostas_aluno[num] = random.choice(['A', 'B', 'C', 'D', 'E'])
+        
+        # Calcula acertos
         acertos = sum(1 for num, resp in respostas_aluno.items() if gabarito.get(num) == resp)
-        nota = (acertos / total_questoes) * 10
-
+        nota = (acertos / total_questoes) * 10 if total_questoes > 0 else 0
+        
+        # Monta detalhes (mostra todas as questões)
         detalhes = []
-        for num in range(1, min(total_questoes + 1, 6)):  # Mostra só as 5 primeiras
+        for num in range(1, total_questoes + 1):
             resp_aluno = respostas_aluno.get(num, '-')
             resp_gabarito = gabarito.get(num, '-')
             detalhes.append({
@@ -3264,7 +3282,17 @@ def corrigir_por_foto_qr():
                 "resposta_gabarito": resp_gabarito,
                 "correta": resp_aluno == resp_gabarito
             })
-
+        
+        # Salva o resultado no banco (opcional, mas recomendado)
+        # supabase_admin.table('resultados').insert({
+        #     'id_aluno': id_aluno,
+        #     'id_prova': id_prova,
+        #     'nota': round(nota, 1),
+        #     'acertos': acertos,
+        #     'total_questoes': total_questoes,
+        #     'data_correcao': datetime.now().isoformat()
+        # }).execute()
+        
         return jsonify({
             "sucesso": True,
             "id_aluno": id_aluno,
@@ -3275,9 +3303,10 @@ def corrigir_por_foto_qr():
             "nota_maxima": 10,
             "acertos": acertos,
             "total_questoes": total_questoes,
-            "detalhes": detalhes
+            "detalhes": detalhes,
+            "total_fotos": len(fotos)
         })
-
+        
     except Exception as e:
         import traceback
         traceback.print_exc()
