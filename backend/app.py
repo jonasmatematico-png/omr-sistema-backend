@@ -3222,6 +3222,8 @@ def corrigir_por_foto_qr():
         id_aluno = data.get('id_aluno')
         id_prova = data.get('id_prova')
         
+        print(f" Recebido: id_aluno={id_aluno}, id_prova={id_prova}, fotos={len(fotos) if fotos else 0}")
+        
         if not fotos or not id_aluno or not id_prova:
             return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
         
@@ -3244,24 +3246,40 @@ def corrigir_por_foto_qr():
         nome_aluno = aluno.data[0]['nome_completo']
         total_questoes = prova.data[0]['numero_questoes']
         
+        print(f"✅ Prova: {nome_prova}, Aluno: {nome_aluno}, Questões: {total_questoes}")
+        
         # Busca critérios de correção da tabela questoes_abertas
         questoes = supabase_admin.table('questoes_abertas') \
             .select('numero, enunciado, resposta_esperada, valor, habilidade_codigo, descritor_codigo') \
             .eq('id_avaliacao', id_prova) \
             .order('numero') \
             .execute()
-
+        
+        print(f" Questões encontradas: {len(questoes.data) if questoes.data else 0}")
+        
         criterios = []
+        valor_total = 0.0  # ← SEMPRE DEFINIDO NO INÍCIO
+        
         if questoes.data:
             for q in questoes.data:
+                try:
+                    valor_questao = float(q.get('valor', 0))
+                except (ValueError, TypeError):
+                    valor_questao = 0.0
+                
+                valor_total += valor_questao
+                
                 criterios.append({
-                    "numero": q['numero'],
+                    "numero": q.get('numero', 0),
                     "enunciado": q.get('enunciado', ''),
-                    "criterios_correcao": q.get('resposta_esperada', ''),  # ← Isso deve vir do banco!
-                    "valor": float(q.get('valor', 0)),
+                    "criterios_correcao": q.get('resposta_esperada', ''),
+                    "valor": valor_questao,
                     "habilidade_codigo": q.get('habilidade_codigo', ''),
                     "descritor_codigo": q.get('descritor_codigo', '')
                 })
+        
+        print(f" Valor total da prova: {valor_total}")
+        print(f"📝 Critérios montados: {len(criterios)}")
         
         return jsonify({
             "sucesso": True,
@@ -3277,7 +3295,8 @@ def corrigir_por_foto_qr():
         
     except Exception as e:
         import traceback
-        traceback.print_exc()
+        erro_detalhe = traceback.format_exc()
+        print(f"❌ ERRO EM corrigir_por_foto_qr: {erro_detalhe}")
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 
