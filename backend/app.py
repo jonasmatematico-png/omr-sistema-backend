@@ -3211,18 +3211,26 @@ def processar_imagem_omr():
         if img is None:
             return jsonify({"sucesso": False, "erro": "Imagem inválida"}), 400
 
-        # 2. Busca gabarito da prova no banco
-        questoes = supabase.table('questoes_objetivas') \
+        # 2. Busca gabarito da prova no banco (usando a tabela correta: 'questoes')
+        questoes = supabase.table('questoes') \
             .select('numero, gabarito') \
             .eq('id_avaliacao', id_avaliacao) \
             .order('numero') \
             .execute()
         
         if not questoes.data:
-            return jsonify({"sucesso": False, "erro": "Prova sem questões cadastradas"}), 404
+            return jsonify({"sucesso": False, "erro": "Prova sem questões cadastradas na tabela 'questoes'"}), 404
         
-        gabarito_oficial = {q['numero']: q['gabarito'].upper() for q in questoes.data}
+        # Garante que o gabarito esteja em letra maiúscula para comparar depois
+        gabarito_oficial = {}
+        for q in questoes.data:
+            num = q['numero']
+            # Tenta pegar 'gabarito', se não existir, usa 'resposta_correta' ou 'A' como fallback
+            resp = q.get('gabarito') or q.get('resposta_correta') or 'A'
+            gabarito_oficial[num] = str(resp).strip().upper()
+            
         total_questoes = len(gabarito_oficial)
+        print(f"✅ Gabarito carregado da tabela 'questoes': {total_questoes} questões.")
 
         # 3. DETECÇÃO DOS 4 MARCADORES (quadrados pretos nos cantos)
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
