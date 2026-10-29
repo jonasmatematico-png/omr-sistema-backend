@@ -3408,10 +3408,20 @@ def processar_imagem_omr():
             cv2.putText(img_debug, f"{resposta_aluno}", (x_pos-10, y_pos+5),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, cor, 2)
 
-        # 7. Converte imagem final para base64
-        _, buffer = cv2.imencode('.jpg', img_debug, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        # 7. Converte imagem final para base64 (REDUZIDA para não estourar o JSON)
+        # Redimensiona para no máximo 800px de largura
+        h_debug, w_debug = img_debug.shape[:2]
+        if w_debug > 800:
+            ratio = 800 / w_debug
+            new_size = (800, int(h_debug * ratio))
+            img_debug = cv2.resize(img_debug, new_size, interpolation=cv2.INTER_AREA)
+        
+        # Qualidade 60 (bem menor que 85) para reduzir tamanho
+        _, buffer = cv2.imencode('.jpg', img_debug, [cv2.IMWRITE_JPEG_QUALITY, 60])
         img_base64 = base64.b64encode(buffer).decode('utf-8')
         img_data_url = f"data:image/jpeg;base64,{img_base64}"
+        
+        print(f"📦 Tamanho da imagem base64: {len(img_base64)} bytes")
 
         # 8. Calcula nota
         nota_final = (acertos / total_questoes) * 10 if total_questoes > 0 else 0
