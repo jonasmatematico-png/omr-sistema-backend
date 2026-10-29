@@ -3183,7 +3183,7 @@ import base64
 
 @app.route('/api/teste_recorte', methods=['POST'])
 def teste_recorte():
-    """Teste de recorte com parâmetros relaxados"""
+    """Teste de recorte ULTRA sensível para marcadores pequenos"""
     try:
         if not request.is_json:
             return jsonify({"sucesso": False, "erro": "Formato inválido"}), 400
@@ -3206,58 +3206,77 @@ def teste_recorte():
 
         img_debug = img.copy()
         h, w = img.shape[:2]
-        print(f" Imagem original: {w}x{h}")
+        print(f"📐 Imagem original: {w}x{h}")
 
         # ====================================================================
-        # DETECÇÃO DOS MARCADORES (parâmetros relaxados)
+        # DETECÇÃO ULTRA SENSÍVEL
         # ====================================================================
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        img_blur = cv2.GaussianBlur(img_gray, (5, 5), 1)
+        
+        # Redimensiona para detectar melhor (opcional, mas ajuda)
+        # Se a imagem for muito grande, reduz para 1200px de largura
+        scale = 1.0
+        if w > 1200:
+            scale = 1200 / w
+            img_resized = cv2.resize(img, (1200, int(h * scale)), interpolation=cv2.INTER_AREA)
+            img_gray_resized = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
+        else:
+            img_resized = img
+            img_gray_resized = img_gray
+        
+        h_res, w_res = img_resized.shape[:2]
+        print(f"📏 Imagem processada: {w_res}x{h_res} (scale={scale:.2f})")
         
         # Tenta MÚLTIPLOS thresholds
         marcadores = []
         
-        for thresh_val in [40, 60, 80, 100, 120]:
-            _, img_thresh = cv2.threshold(img_blur, thresh_val, 255, cv2.THRESH_BINARY_INV)
+        for thresh_val in [30, 50, 70, 90, 110, 130]:
+            _, img_thresh = cv2.threshold(img_gray_resized, thresh_val, 255, cv2.THRESH_BINARY_INV)
             
             # Limpeza morfológica
-            kernel = np.ones((3,3), np.uint8)
-            img_thresh = cv2.morphologyEx(img_thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+            kernel = np.ones((2,2), np.uint8)
+            img_thresh = cv2.morphologyEx(img_thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
             
             contours, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             for cnt in contours:
                 area = cv2.contourArea(cnt)
                 
-                # Marcadores: entre 0.1% e 5% da imagem (mais amplo)
-                if h * w * 0.001 < area < h * w * 0.05:
+                # Marcadores: entre 0.05% e 8% da imagem (MUITO mais amplo)
+                if h_res * w_res * 0.0005 < area < h_res * w_res * 0.08:
                     peri = cv2.arcLength(cnt, True)
-                    approx = cv2.approxPolyDP(cnt, 0.05 * peri, True)  # Mais tolerante
+                    approx = cv2.approxPolyDP(cnt, 0.08 * peri, True)  # Mais tolerante
                     
-                    if len(approx) == 4:
+                    if len(approx) >= 4 and len(approx) <= 6:  # Aceita 4 a 6 vértices
                         x, y, w_cnt, h_cnt = cv2.boundingRect(approx)
                         aspect_ratio = float(w_cnt) / h_cnt
                         
-                        # Aspect ratio mais amplo (0.3 a 3.0)
-                        if 0.3 < aspect_ratio < 3.0:
-                            # Verifica se é escuro (mas com threshold mais alto)
-                            roi = img_gray[y:y+h_cnt, x:x+w_cnt]
+                        # Aspect ratio muito amplo (0.2 a 5.0)
+                        if 0.2 < aspect_ratio < 5.0:
+                            # Verifica se é escuro
+                            roi = img_gray_resized[y:y+h_cnt, x:x+w_cnt]
                             media = np.mean(roi)
                             
-                            if media < 100:  # Threshold mais alto
+                            if media < 120:  # Threshold bem alto
                                 is_dup = False
                                 for (mx, my, mw, mh) in marcadores:
                                     distancia = np.sqrt((x - mx)**2 + (y - my)**2)
-                                    if distancia < 150:  # Distância maior
+                                    if distancia < 200:  # Distância maior
                                         is_dup = True
                                         break
                                 
                                 if not is_dup:
-                                    marcadores.append((x, y, w_cnt, h_cnt))
-                                    cv2.rectangle(img_debug, (x, y), (x+w_cnt, y+h_cnt), (0, 255, 0), 3)
-                                    cv2.putText(img_debug, f"M{len(marcadores)}", (x, y-10),
+                                    # Converte coordenadas de volta para imagem original
+                                    x_orig = int(x / scale)
+                                    y_orig = int(y / scale)
+                                    w_orig = int(w_cnt / scale)
+                                    h_orig = int(h_cnt / scale)
+                                    
+                                    marcadores.append((x_orig, y_orig, w_orig, h_orig))
+                                    cv2.rectangle(img_debug, (x_orig, y_orig), (x_orig+w_orig, y_orig+h_orig), (0, 255, 0), 3)
+                                    cv2.putText(img_debug, f"M{len(marcadores)}", (x_orig, y_orig-10),
                                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                                    print(f"✅ Marcador {len(marcadores)}: ({x}, {y}) {w_cnt}x{h_cnt} área={area:.0f} aspect={aspect_ratio:.2f} media={media:.0f}")
+                                    print(f"✅ Marcador {len(marcadores)}: ({x_orig}, {y_orig}) {w_orig}x{h_orig} área_orig={area/scale**2:.0f} aspect={aspect_ratio:.2f} media={media:.0f}")
         
         print(f"🔍 Total de marcadores encontrados: {len(marcadores)}")
 
