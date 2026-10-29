@@ -3180,9 +3180,10 @@ def listar_avaliacoes():
 import cv2
 import numpy as np
 import base64
+
 @app.route('/api/teste_recorte', methods=['POST'])
 def teste_recorte():
-    """Teste de recorte com ordenação simples e robusta"""
+    """Teste de recorte com ordenação simples por posição"""
     try:
         if not request.is_json:
             return jsonify({"sucesso": False, "erro": "Formato inválido"}), 400
@@ -3205,7 +3206,7 @@ def teste_recorte():
 
         img_debug = img.copy()
         h, w = img.shape[:2]
-        print(f"📐 Imagem original: {w}x{h}")
+        print(f" Imagem original: {w}x{h}")
 
         # ====================================================================
         # DETECÇÃO DOS MARCADORES
@@ -3270,7 +3271,7 @@ def teste_recorte():
         print(f"🔍 Marcadores encontrados: {len(marcadores)}")
 
         # ====================================================================
-        # RECORTA COM ORDENAÇÃO SIMPLES (sentido horário)
+        # RECORTA COM ORDENAÇÃO SIMPLES POR POSIÇÃO
         # ====================================================================
         img_recortada = img.copy()
         recorte_ok = False
@@ -3280,69 +3281,51 @@ def teste_recorte():
             marcadores = sorted(marcadores, key=lambda m: m[2]*m[3], reverse=True)[:4]
             
             # Calcula centros
-            centros = np.array([[m[0] + m[2]//2, m[1] + m[3]//2] for m in marcadores], dtype=np.float32)
+            centros = [[m[0] + m[2]//2, m[1] + m[3]//2] for m in marcadores]
             
-            # Calcula centroide
-            centroide = np.mean(centros, axis=0)
-            print(f" Centroide: {centroide}")
+            # Ordena por Y (topo para baixo), depois por X (esquerda para direita)
+            centros_sorted = sorted(centros, key=lambda p: (p[1], p[0]))
             
-            # Calcula ângulo de cada ponto em relação ao centroide
-            # No sistema de coordenadas da imagem: Y cresce para baixo
-            # Então invertemos o Y para o cálculo do ângulo
-            angulos_pontos = []
-            for i, ponto in enumerate(centros):
-                dx = ponto[0] - centroide[0]
-                dy = -(ponto[1] - centroide[1])  # Inverte Y
-                angulo = np.arctan2(dy, dx) * 180 / np.pi
-                # Normaliza para 0-360
-                if angulo < 0:
-                    angulo += 360
-                angulos_pontos.append((angulo, i))
-                print(f"   Ponto {i}: ({ponto[0]:.0f}, {ponto[1]:.0f}) ângulo={angulo:.1f}°")
+            # Separa em 2 grupos: topo (2 primeiros) e base (2 últimos)
+            topo = sorted(centros_sorted[:2], key=lambda p: p[0])  # Ordena por X
+            base = sorted(centros_sorted[2:], key=lambda p: p[0])   # Ordena por X
             
-            # Ordena por ângulo (sentido anti-horário a partir da direita)
-            angulos_pontos.sort(key=lambda x: x[0])
+            # Agora temos: topo_esq, topo_dir, baixo_esq, baixo_dir
+            topo_esq = np.array(topo[0], dtype=np.float32)
+            topo_dir = np.array(topo[1], dtype=np.float32)
+            baixo_esq = np.array(base[0], dtype=np.float32)
+            baixo_dir = np.array(base[1], dtype=np.float32)
             
-            # Reordena: topo-esq, topo-dir, baixo-dir, baixo-esq
-            # Começando do ângulo ~135° (topo-esquerdo) e indo no sentido horário
-            # Ajusta o índice de início para começar do topo-esquerdo
-            inicio_idx = 0
-            for i, (angulo, idx) in enumerate(angulos_pontos):
-                if 90 <= angulo <= 180:  # Topo-esquerdo está entre 90° e 180°
-                    inicio_idx = i
-                    break
+            print(f"📍 Topo-esq: {topo_esq}")
+            print(f"📍 Topo-dir: {topo_dir}")
+            print(f"📍 Baixo-esq: {baixo_esq}")
+            print(f"📍 Baixo-dir: {baixo_dir}")
             
-            # Reordena começando do topo-esquerdo, sentido horário
-            pontos_ordenados = np.zeros((4, 2), dtype=np.float32)
-            for i in range(4):
-                idx = angulos_pontos[(inicio_idx + i) % 4][1]
-                pontos_ordenados[i] = centros[idx]
-            
-            print(f"📍 Pontos ordenados (sentido horário):")
-            print(f"   [0] Topo-esq: {pontos_ordenados[0]}")
-            print(f"   [1] Topo-dir: {pontos_ordenados[1]}")
-            print(f"   [2] Baixo-dir: {pontos_ordenados[2]}")
-            print(f"   [3] Baixo-esq: {pontos_ordenados[3]}")
+            pontos_ordenados = np.array([topo_esq, topo_dir, baixo_dir, baixo_esq], dtype=np.float32)
             
             # Calcula dimensões
             largura = int(max(
-                np.linalg.norm(pontos_ordenados[1] - pontos_ordenados[0]),
-                np.linalg.norm(pontos_ordenados[2] - pontos_ordenados[3])
+                np.linalg.norm(topo_dir - topo_esq),
+                np.linalg.norm(baixo_dir - baixo_esq)
             ))
             altura = int(max(
-                np.linalg.norm(pontos_ordenados[3] - pontos_ordenados[0]),
-                np.linalg.norm(pontos_ordenados[2] - pontos_ordenados[1])
+                np.linalg.norm(baixo_esq - topo_esq),
+                np.linalg.norm(baixo_dir - topo_dir)
             ))
             
-            print(f" Dimensões calculadas: {largura}x{altura} (aspect ratio: {largura/altura:.2f})")
+            print(f"📐 Dimensões: {largura}x{altura} (aspect: {largura/altura:.2f})")
             
-            # Transformação de perspectiva
-            dst = np.array([[0, 0], [largura-1, 0], [largura-1, altura-1], [0, altura-1]], dtype=np.float32)
-            M = cv2.getPerspectiveTransform(pontos_ordenados, dst)
-            img_recortada = cv2.warpPerspective(img, M, (largura, altura))
-            
-            recorte_ok = True
-            print(f"✅ Recorte realizado: {largura}x{altura}")
+            # Verifica se as dimensões fazem sentido
+            if largura < 100 or altura < 100:
+                print("⚠️ Dimensões muito pequenas, pulando recorte")
+            else:
+                # Transformação de perspectiva
+                dst = np.array([[0, 0], [largura-1, 0], [largura-1, altura-1], [0, altura-1]], dtype=np.float32)
+                M = cv2.getPerspectiveTransform(pontos_ordenados, dst)
+                img_recortada = cv2.warpPerspective(img, M, (largura, altura))
+                
+                recorte_ok = True
+                print(f"✅ Recorte realizado: {largura}x{altura}")
         else:
             print(f"⚠️ Apenas {len(marcadores)} marcadores")
 
@@ -3365,7 +3348,7 @@ def teste_recorte():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"sucesso": False, "erro": str(e)}), 500   
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
     
 # ==========================================================
 # 🚀 ROTA IMAGEM PARA CORETOR DISERTATIVA HTML
