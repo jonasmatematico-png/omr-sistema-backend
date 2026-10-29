@@ -3179,30 +3179,70 @@ def listar_avaliacoes():
 # ==========================================================
 @app.route('/api/processar_imagem_omr', methods=['POST'])
 def processar_imagem_omr():
+    """MÁQUINA 1: Recebe a imagem em JSON e retorna a nota + detalhes"""
     try:
-        # 1. Recebe a imagem e os dados
-        imagem = request.files.get('imagem')
-        id_avaliacao = request.form.get('id_avaliacao')
-        id_aluno = request.form.get('id_aluno')
+        # 1. Recebe os dados em formato JSON (não multipart)
+        if not request.is_json:
+            return jsonify({"sucesso": False, "erro": "Formato inválido. Envie JSON."}), 400
+        
+        dados = request.get_json()
+        imagem_base64 = dados.get('imagem')
+        id_aluno = dados.get('id_aluno')
+        id_avaliacao = dados.get('id_avaliacao')
 
-        if not imagem:
+        if not imagem_base64:
             return jsonify({"sucesso": False, "erro": "Nenhuma imagem enviada"}), 400
+        
+        if not id_aluno or not id_avaliacao:
+            return jsonify({"sucesso": False, "erro": "Dados do aluno/prova incompletos"}), 400
 
-        # 2. AQUI ENTRA SUA LÓGICA DE OMR (OpenCV, EasyOCR, ou chamada à IA de Visão)
-        # Exemplo simulado de sucesso:
-        resultado_simulado = {
+        # 2. AQUI ENTRARIA SUA LÓGICA DE OMR (OpenCV, EasyOCR, ou IA de Visão)
+        # Por enquanto, vamos SIMULAR para testar o fluxo completo do HTML
+        
+        # Simulação: Vamos fingir que a IA leu a imagem e viu que o aluno acertou 8 de 10
+        nota_simulada = 8.0
+        detalhes_simulados = [
+            {"questao": 1, "resposta": "A", "correta": True},
+            {"questao": 2, "resposta": "B", "correta": True},
+            {"questao": 3, "resposta": "C", "correta": False},
+            {"questao": 4, "resposta": "D", "correta": True},
+            {"questao": 5, "resposta": "A", "correta": True},
+            {"questao": 6, "resposta": "B", "correta": True},
+            {"questao": 7, "resposta": "C", "correta": False},
+            {"questao": 8, "resposta": "D", "correta": True},
+            {"questao": 9, "resposta": "A", "correta": True},
+            {"questao": 10, "resposta": "B", "correta": True},
+        ]
+
+        # 3. Busca nomes reais no banco para exibir na tela
+        nome_aluno = f"Aluno ID {id_aluno}"
+        nome_prova = f"Prova ID {id_avaliacao}"
+        
+        try:
+            resp_aluno = supabase.table("alunos").select("nome_completo").eq("id", id_aluno).execute()
+            if resp_aluno.data:
+                nome_aluno = resp_aluno.data[0]['nome_completo']
+                
+            resp_prova = supabase.table("avaliacoes").select("nome").eq("id", id_avaliacao).execute()
+            if resp_prova.data:
+                nome_prova = resp_prova.data[0]['nome']
+        except Exception as e:
+            print(f"⚠️ Não conseguiu buscar nomes: {e}")
+
+        # 4. Retorna no formato EXATO que a rota salvar_correcao_omr espera
+        return jsonify({
             "sucesso": True,
-            "nota": 8.5,
-            "acertos": 17,
-            "total_questoes": 20,
-            "detalhes": "Questões 1, 5 e 12 marcadas incorretamente."
-        }
-        
-        # 3. (Opcional) Salvar a nota no Supabase aqui
-        
-        return jsonify(resultado_simulado)
+            "nome_aluno": nome_aluno,
+            "nome_prova": nome_prova,
+            "nota_final": nota_simulada,
+            "detalhes_respostas": detalhes_simulados,
+            "acertos": sum(1 for d in detalhes_simulados if d['correta']),
+            "total_questoes": len(detalhes_simulados)
+        }), 200
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
     
 # ==========================================================
