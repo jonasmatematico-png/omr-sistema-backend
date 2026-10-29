@@ -3183,7 +3183,7 @@ import base64
 
 @app.route('/api/teste_recorte', methods=['POST'])
 def teste_recorte():
-    """Teste de recorte com ordenação simples por posição"""
+    """Teste de recorte detectando o CONTORNO DA FOLHA (mais robusto)"""
     try:
         if not request.is_json:
             return jsonify({"sucesso": False, "erro": "Formato inválido"}), 400
@@ -3206,100 +3206,97 @@ def teste_recorte():
 
         img_debug = img.copy()
         h, w = img.shape[:2]
-        print(f" Imagem original: {w}x{h}")
+        print(f"📐 Imagem original: {w}x{h}")
 
         # ====================================================================
-        # DETECÇÃO DOS MARCADORES
+        # DETECÇÃO DO CONTORNO DA FOLHA (retângulo grande)
         # ====================================================================
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img_blur = cv2.GaussianBlur(img_gray, (5, 5), 1)
         
-        scale = 1.0
-        if w > 1200:
-            scale = 1200 / w
-            img_resized = cv2.resize(img, (1200, int(h * scale)), interpolation=cv2.INTER_AREA)
-            img_gray_resized = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
-        else:
-            img_resized = img
-            img_gray_resized = img_gray
+        # Tenta MÚLTIPLOS métodos de detecção
+        folha_contour = None
+        max_area = 0
         
-        h_res, w_res = img_resized.shape[:2]
+        # Método 1: Canny edges
+        img_edges = cv2.Canny(img_blur, 50, 150)
+        contours, _ = cv2.findContours(img_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        marcadores = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            # Folha deve ocupar pelo menos 20% da imagem
+            if area > h * w * 0.20:
+                peri = cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+                
+                if len(approx) == 4:
+                    if area > max_area:
+                        max_area = area
+                        folha_contour = approx
         
-        for thresh_val in [30, 50, 70, 90, 110, 130]:
-            _, img_thresh = cv2.threshold(img_gray_resized, thresh_val, 255, cv2.THRESH_BINARY_INV)
-            
-            kernel = np.ones((2,2), np.uint8)
-            img_thresh = cv2.morphologyEx(img_thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
-            
+        # Método 2: Threshold adaptativo (se método 1 falhou)
+        if folha_contour is None:
+            img_thresh = cv2.adaptiveThreshold(img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                                cv2.THRESH_BINARY_INV, 11, 2)
             contours, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             for cnt in contours:
                 area = cv2.contourArea(cnt)
-                
-                if h_res * w_res * 0.0005 < area < h_res * w_res * 0.08:
+                if area > h * w * 0.20:
                     peri = cv2.arcLength(cnt, True)
-                    approx = cv2.approxPolyDP(cnt, 0.08 * peri, True)
+                    approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
                     
-                    if len(approx) >= 4 and len(approx) <= 6:
-                        x, y, w_cnt, h_cnt = cv2.boundingRect(approx)
-                        aspect_ratio = float(w_cnt) / h_cnt
-                        
-                        if 0.2 < aspect_ratio < 5.0:
-                            roi = img_gray_resized[y:y+h_cnt, x:x+w_cnt]
-                            media = np.mean(roi)
-                            
-                            if media < 120:
-                                is_dup = False
-                                for (mx, my, mw, mh) in marcadores:
-                                    distancia = np.sqrt((x - mx)**2 + (y - my)**2)
-                                    if distancia < 200:
-                                        is_dup = True
-                                        break
-                                
-                                if not is_dup:
-                                    x_orig = int(x / scale)
-                                    y_orig = int(y / scale)
-                                    w_orig = int(w_cnt / scale)
-                                    h_orig = int(h_cnt / scale)
-                                    
-                                    marcadores.append((x_orig, y_orig, w_orig, h_orig))
-                                    cv2.rectangle(img_debug, (x_orig, y_orig), (x_orig+w_orig, y_orig+h_orig), (0, 255, 0), 3)
-                                    cv2.putText(img_debug, f"M{len(marcadores)}", (x_orig, y_orig-10),
-                                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                    if len(approx) == 4:
+                        if area > max_area:
+                            max_area = area
+                            folha_contour = approx
         
-        print(f"🔍 Marcadores encontrados: {len(marcadores)}")
+        # Método 3: Threshold simples (última tentativa)
+        if folha_contour is None:
+            _, img_thresh = cv2.threshold(img_gray, 200, 255, cv2.THRESH_BINARY_INV)
+            contours, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
+                if area > h * w * 0.20:
+                    peri = cv2.arcLength(cnt, True)
+                    approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+                    
+                    if len(approx) == 4:
+                        if area > max_area:
+                            max_area = area
+                            folha_contour = approx
+        
+        print(f" Folha detectada: {folha_contour is not None}, área: {max_area}")
+        
+        # Desenha o contorno da folha
+        if folha_contour is not None:
+            cv2.drawContours(img_debug, [folha_contour], -1, (0, 255, 0), 5)
+            cv2.putText(img_debug, "FOLHA", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         # ====================================================================
-        # RECORTA COM ORDENAÇÃO SIMPLES POR POSIÇÃO
+        # RECORTA USANDO OS 4 CANTOS DA FOLHA
         # ====================================================================
         img_recortada = img.copy()
         recorte_ok = False
         
-        if len(marcadores) >= 4:
-            # Pega os 4 maiores
-            marcadores = sorted(marcadores, key=lambda m: m[2]*m[3], reverse=True)[:4]
+        if folha_contour is not None:
+            # Pega os 4 pontos do contorno
+            pontos_folha = folha_contour.reshape(4, 2).astype(np.float32)
             
-            # Calcula centros
-            centros = [[m[0] + m[2]//2, m[1] + m[3]//2] for m in marcadores]
+            # Ordena: topo-esq, topo-dir, baixo-dir, baixo-esq
+            soma = pontos_folha.sum(axis=1)
+            diff = np.diff(pontos_folha, axis=1)
             
-            # Ordena por Y (topo para baixo), depois por X (esquerda para direita)
-            centros_sorted = sorted(centros, key=lambda p: (p[1], p[0]))
-            
-            # Separa em 2 grupos: topo (2 primeiros) e base (2 últimos)
-            topo = sorted(centros_sorted[:2], key=lambda p: p[0])  # Ordena por X
-            base = sorted(centros_sorted[2:], key=lambda p: p[0])   # Ordena por X
-            
-            # Agora temos: topo_esq, topo_dir, baixo_esq, baixo_dir
-            topo_esq = np.array(topo[0], dtype=np.float32)
-            topo_dir = np.array(topo[1], dtype=np.float32)
-            baixo_esq = np.array(base[0], dtype=np.float32)
-            baixo_dir = np.array(base[1], dtype=np.float32)
+            topo_esq = pontos_folha[np.argmin(soma)]
+            baixo_dir = pontos_folha[np.argmax(soma)]
+            topo_dir = pontos_folha[np.argmin(diff)]
+            baixo_esq = pontos_folha[np.argmax(diff)]
             
             print(f"📍 Topo-esq: {topo_esq}")
             print(f"📍 Topo-dir: {topo_dir}")
-            print(f"📍 Baixo-esq: {baixo_esq}")
             print(f"📍 Baixo-dir: {baixo_dir}")
+            print(f"📍 Baixo-esq: {baixo_esq}")
             
             pontos_ordenados = np.array([topo_esq, topo_dir, baixo_dir, baixo_esq], dtype=np.float32)
             
@@ -3317,7 +3314,7 @@ def teste_recorte():
             
             # Verifica se as dimensões fazem sentido
             if largura < 100 or altura < 100:
-                print("⚠️ Dimensões muito pequenas, pulando recorte")
+                print("⚠️ Dimensões muito pequenas")
             else:
                 # Transformação de perspectiva
                 dst = np.array([[0, 0], [largura-1, 0], [largura-1, altura-1], [0, altura-1]], dtype=np.float32)
@@ -3327,7 +3324,7 @@ def teste_recorte():
                 recorte_ok = True
                 print(f"✅ Recorte realizado: {largura}x{altura}")
         else:
-            print(f"⚠️ Apenas {len(marcadores)} marcadores")
+            print("️ Folha não detectada")
 
         # Converte para mostrar
         _, buffer1 = cv2.imencode('.jpg', img_debug, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -3340,7 +3337,7 @@ def teste_recorte():
             "sucesso": True,
             "imagem_original_com_marcadores": f"data:image/jpeg;base64,{img_debug_base64}",
             "imagem_recortada": f"data:image/jpeg;base64,{img_recortada_base64}",
-            "marcadores_encontrados": len(marcadores),
+            "folha_detectada": folha_contour is not None,
             "recorte_ok": recorte_ok,
             "dimensoes_recorte": f"{img_recortada.shape[1]}x{img_recortada.shape[0]}" if recorte_ok else "N/A"
         }), 200
