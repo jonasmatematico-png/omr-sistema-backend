@@ -3183,7 +3183,7 @@ import base64
 
 @app.route('/api/teste_recorte', methods=['POST'])
 def teste_recorte():
-    """Endpoint de teste: APENAS recorta o gabarito e mostra o resultado"""
+    """Teste de recorte com parâmetros relaxados"""
     try:
         if not request.is_json:
             return jsonify({"sucesso": False, "erro": "Formato inválido"}), 400
@@ -3206,60 +3206,60 @@ def teste_recorte():
 
         img_debug = img.copy()
         h, w = img.shape[:2]
-        print(f"📐 Imagem original: {w}x{h}")
+        print(f" Imagem original: {w}x{h}")
 
         # ====================================================================
-        # DETECÇÃO DOS 4 MARCADORES PRETOS
+        # DETECÇÃO DOS MARCADORES (parâmetros relaxados)
         # ====================================================================
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         img_blur = cv2.GaussianBlur(img_gray, (5, 5), 1)
         
-        # Threshold para pegar só o que é MUITO preto
-        _, img_thresh = cv2.threshold(img_blur, 60, 255, cv2.THRESH_BINARY_INV)
-        
-        # Limpeza morfológica
-        kernel = np.ones((3,3), np.uint8)
-        img_thresh = cv2.morphologyEx(img_thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
-        
-        contours, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
+        # Tenta MÚLTIPLOS thresholds
         marcadores = []
         
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
+        for thresh_val in [40, 60, 80, 100, 120]:
+            _, img_thresh = cv2.threshold(img_blur, thresh_val, 255, cv2.THRESH_BINARY_INV)
             
-            # Marcadores: entre 0.2% e 4% da imagem
-            if h * w * 0.002 < area < h * w * 0.04:
-                peri = cv2.arcLength(cnt, True)
-                approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
+            # Limpeza morfológica
+            kernel = np.ones((3,3), np.uint8)
+            img_thresh = cv2.morphologyEx(img_thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+            
+            contours, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
                 
-                if len(approx) == 4:
-                    x, y, w_cnt, h_cnt = cv2.boundingRect(approx)
-                    aspect_ratio = float(w_cnt) / h_cnt
+                # Marcadores: entre 0.1% e 5% da imagem (mais amplo)
+                if h * w * 0.001 < area < h * w * 0.05:
+                    peri = cv2.arcLength(cnt, True)
+                    approx = cv2.approxPolyDP(cnt, 0.05 * peri, True)  # Mais tolerante
                     
-                    # Quase quadrado (0.5 a 2.0)
-                    if 0.5 < aspect_ratio < 2.0:
-                        # Verifica se é realmente escuro
-                        roi = img_gray[y:y+h_cnt, x:x+w_cnt]
-                        media = np.mean(roi)
+                    if len(approx) == 4:
+                        x, y, w_cnt, h_cnt = cv2.boundingRect(approx)
+                        aspect_ratio = float(w_cnt) / h_cnt
                         
-                        if media < 80:  # Bem escuro
-                            is_dup = False
-                            for (mx, my, mw, mh) in marcadores:
-                                distancia = np.sqrt((x - mx)**2 + (y - my)**2)
-                                if distancia < 100:
-                                    is_dup = True
-                                    break
+                        # Aspect ratio mais amplo (0.3 a 3.0)
+                        if 0.3 < aspect_ratio < 3.0:
+                            # Verifica se é escuro (mas com threshold mais alto)
+                            roi = img_gray[y:y+h_cnt, x:x+w_cnt]
+                            media = np.mean(roi)
                             
-                            if not is_dup:
-                                marcadores.append((x, y, w_cnt, h_cnt))
-                                cv2.rectangle(img_debug, (x, y), (x+w_cnt, y+h_cnt), (0, 255, 0), 3)
-                                cv2.putText(img_debug, f"M{len(marcadores)}", (x, y-10),
-                                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                            if media < 100:  # Threshold mais alto
+                                is_dup = False
+                                for (mx, my, mw, mh) in marcadores:
+                                    distancia = np.sqrt((x - mx)**2 + (y - my)**2)
+                                    if distancia < 150:  # Distância maior
+                                        is_dup = True
+                                        break
+                                
+                                if not is_dup:
+                                    marcadores.append((x, y, w_cnt, h_cnt))
+                                    cv2.rectangle(img_debug, (x, y), (x+w_cnt, y+h_cnt), (0, 255, 0), 3)
+                                    cv2.putText(img_debug, f"M{len(marcadores)}", (x, y-10),
+                                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                                    print(f"✅ Marcador {len(marcadores)}: ({x}, {y}) {w_cnt}x{h_cnt} área={area:.0f} aspect={aspect_ratio:.2f} media={media:.0f}")
         
-        print(f"🔍 Marcadores encontrados: {len(marcadores)}")
-        for i, (x, y, w_cnt, h_cnt) in enumerate(marcadores):
-            print(f"   M{i+1}: ({x}, {y}) tamanho {w_cnt}x{h_cnt}")
+        print(f"🔍 Total de marcadores encontrados: {len(marcadores)}")
 
         # ====================================================================
         # SE ENCONTROU 4 MARCADORES, RECORTA
@@ -3274,7 +3274,7 @@ def teste_recorte():
             # Calcula centros
             pontos_marc = np.array([[m[0] + m[2]//2, m[1] + m[3]//2] for m in marcadores], dtype=np.float32)
             
-            # Ordena: topo-esq, topo-dir, baixo-dir, baixo-esq
+            # Ordena
             soma = pontos_marc.sum(axis=1)
             diff = np.diff(pontos_marc, axis=1)
             
@@ -3282,11 +3282,6 @@ def teste_recorte():
             baixo_dir = pontos_marc[np.argmax(soma)]
             topo_dir = pontos_marc[np.argmin(diff)]
             baixo_esq = pontos_marc[np.argmax(diff)]
-            
-            print(f" Topo-esq: {topo_esq}")
-            print(f"📍 Topo-dir: {topo_dir}")
-            print(f" Baixo-dir: {baixo_dir}")
-            print(f"📍 Baixo-esq: {baixo_esq}")
             
             pontos_ordenados = np.array([topo_esq, topo_dir, baixo_dir, baixo_esq], dtype=np.float32)
             
@@ -3300,9 +3295,7 @@ def teste_recorte():
                 np.linalg.norm(baixo_dir - topo_dir)
             ))
             
-            print(f"📐 Dimensões calculadas: {largura}x{altura}")
-            
-            # Transformação de perspectiva
+            # Transformação
             dst = np.array([[0, 0], [largura-1, 0], [largura-1, altura-1], [0, altura-1]], dtype=np.float32)
             M = cv2.getPerspectiveTransform(pontos_ordenados, dst)
             img_recortada = cv2.warpPerspective(img, M, (largura, altura))
@@ -3310,16 +3303,12 @@ def teste_recorte():
             recorte_ok = True
             print(f"✅ Recorte realizado: {largura}x{altura}")
         else:
-            print(f"⚠️ Apenas {len(marcadores)} marcadores encontrados")
+            print(f"⚠️ Apenas {len(marcadores)} marcadores")
 
-        # ====================================================================
-        # CONVERTE PARA MOSTRAR
-        # ====================================================================
-        # Imagem original com marcadores desenhados
+        # Converte para mostrar
         _, buffer1 = cv2.imencode('.jpg', img_debug, [cv2.IMWRITE_JPEG_QUALITY, 80])
         img_debug_base64 = base64.b64encode(buffer1).decode('utf-8')
         
-        # Imagem recortada
         _, buffer2 = cv2.imencode('.jpg', img_recortada, [cv2.IMWRITE_JPEG_QUALITY, 80])
         img_recortada_base64 = base64.b64encode(buffer2).decode('utf-8')
         
