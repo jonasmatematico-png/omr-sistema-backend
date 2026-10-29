@@ -3183,7 +3183,7 @@ import base64
 
 @app.route('/api/processar_imagem_omr', methods=['POST'])
 def processar_imagem_omr():
-    """OMR com detecção robusta de marcadores e rotação automática"""
+    """OMR com sequência correta: detectar folha → planificar → detectar marcadores → recortar → detectar bolinhas"""
     try:
         if not request.is_json:
             return jsonify({"sucesso": False, "erro": "Formato inválido"}), 400
@@ -3223,62 +3223,49 @@ def processar_imagem_omr():
         gabarito_oficial = {q['numero']: q['gabarito'].upper() for q in questoes.data}
         total_questoes = len(gabarito_oficial)
 
-        # 3. DETECÇÃO ROBUSTA DE MARCADORES
+        # ====================================================================
+        # PASSO 1: DETECTAR A FOLHA DE GABARITO (contorno retangular grande)
+        # ====================================================================
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img_blur = cv2.GaussianBlur(img_gray, (5, 5), 1)
+        img_edges = cv2.Canny(img_blur, 50, 150)
         
-        # Múltiplos thresholds para detectar marcadores em diferentes condições
-        marcadores = []
+        contours, _ = cv2.findContours(img_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        for thresh_val in [30, 50, 80]:
-            _, img_thresh = cv2.threshold(img_gray, thresh_val, 255, cv2.THRESH_BINARY_INV)
-            contours, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Encontra o maior contorno retangular (a folha)
+        folha_contour = None
+        max_area = 0
+        
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area > max_area and area > h * w * 0.1:  # Pelo menos 10% da imagem
+                peri = cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+                if len(approx) == 4:  # Retângulo
+                    max_area = area
+                    folha_contour = approx
+        
+        img_folha = img.copy()
+        
+        if folha_contour is not None:
+            cv2.drawContours(img_debug, [folha_contour], -1, (0, 255, 0), 3)
+            print(f"✅ Folha detectada, área: {max_area}")
             
-            for cnt in contours:
-                area = cv2.contourArea(cnt)
-                # Ajuste: marcadores devem ter entre 0.5% e 5% da área da imagem
-                img_area = h * w
-                if img_area * 0.005 < area < img_area * 0.05:
-                    peri = cv2.arcLength(cnt, True)
-                    approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
-                    if len(approx) == 4:
-                        x, y, w_cnt, h_cnt = cv2.boundingRect(approx)
-                        aspect_ratio = float(w_cnt) / h_cnt
-                        if 0.7 < aspect_ratio < 1.3:  # Quase quadrado
-                            # Evita duplicatas
-                            is_dup = False
-                            for (mx, my, mw, mh) in marcadores:
-                                if abs(x - mx) < 50 and abs(y - my) < 50:
-                                    is_dup = True
-                                    break
-                            if not is_dup:
-                                marcadores.append((x, y, w_cnt, h_cnt))
-                                cv2.rectangle(img_debug, (x, y), (x+w_cnt, y+h_cnt), (255, 0, 255), 3)
-        
-        print(f"🔍 Marcadores encontrados: {len(marcadores)}")
-        
-        # 4. RECORTA E ALINHA se encontrou 4+ marcadores
-        img_processada = img.copy()
-        img_debug_proc = img_debug.copy()
-        
-        if len(marcadores) >= 4:
-            # Pega os 4 maiores
-            marcadores = sorted(marcadores, key=lambda m: m[2]*m[3], reverse=True)[:4]
+            # Ordena os 4 pontos da folha
+            pontos_folha = folha_contour.reshape(4, 2).astype(np.float32)
             
-            # Calcula centros
-            pontos = np.array([[m[0] + m[2]//2, m[1] + m[3]//2] for m in marcadores], dtype=np.float32)
+            # Ordenação: topo-esq, topo-dir, baixo-dir, baixo-esq
+            soma = pontos_folha.sum(axis=1)
+            diff = np.diff(pontos_folha, axis=1)
             
-            # Ordena: topo-esq, topo-dir, baixo-dir, baixo-esq
-            soma = pontos.sum(axis=1)
-            diff = np.diff(pontos, axis=1)
-            
-            topo_esq = pontos[np.argmin(soma)]
-            baixo_dir = pontos[np.argmax(soma)]
-            topo_dir = pontos[np.argmin(diff)]
-            baixo_esq = pontos[np.argmax(diff)]
+            topo_esq = pontos_folha[np.argmin(soma)]
+            baixo_dir = pontos_folha[np.argmax(soma)]
+            topo_dir = pontos_folha[np.argmin(diff)]
+            baixo_esq = pontos_folha[np.argmax(diff)]
             
             pontos_ordenados = np.array([topo_esq, topo_dir, baixo_dir, baixo_esq], dtype=np.float32)
             
-            # Calcula dimensões
+            # Calcula dimensões da folha planificada
             largura = int(max(
                 np.linalg.norm(topo_dir - topo_esq),
                 np.linalg.norm(baixo_dir - baixo_esq)
@@ -3288,28 +3275,113 @@ def processar_imagem_omr():
                 np.linalg.norm(baixo_dir - topo_dir)
             ))
             
-            # Transformação de perspectiva
+            # Transformação de perspectiva (planificação)
             dst = np.array([[0, 0], [largura-1, 0], [largura-1, altura-1], [0, altura-1]], dtype=np.float32)
             M = cv2.getPerspectiveTransform(pontos_ordenados, dst)
-            img_processada = cv2.warpPerspective(img, M, (largura, altura))
-            img_debug_proc = cv2.warpPerspective(img_debug, M, (largura, altura))
+            img_folha = cv2.warpPerspective(img, M, (largura, altura))
+            img_debug = cv2.warpPerspective(img_debug, M, (largura, altura))
             
-            print(f"✅ Gabarito recortado: {largura}x{altura}")
+            print(f"✅ Folha planificada: {largura}x{altura}")
         else:
-            print("️ Sem recorte - marcadores insuficientes")
-            img_debug_proc = img_debug
+            print("⚠️ Folha não detectada, usando imagem original")
+            img_folha = img.copy()
 
-        # 5. DETECÇÃO DAS BOLINHAS (apenas na área do gabarito)
-        h_proc, w_proc = img_processada.shape[:2]
+        # ====================================================================
+        # PASSO 2: DENTRO DA FOLHA, DETECTAR OS 4 MARCADORES (quadrados pretos)
+        # ====================================================================
+        img_folha_gray = cv2.cvtColor(img_folha, cv2.COLOR_BGR2GRAY)
+        
+        marcadores = []
+        
+        # Múltiplos thresholds para detectar marcadores pretos
+        for thresh_val in [30, 50, 80, 100]:
+            _, img_thresh = cv2.threshold(img_folha_gray, thresh_val, 255, cv2.THRESH_BINARY_INV)
+            contours_marc, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for cnt in contours_marc:
+                area = cv2.contourArea(cnt)
+                folha_area = img_folha.shape[0] * img_folha.shape[1]
+                
+                # Marcadores devem ser pequenos quadrados (0.5% a 3% da folha)
+                if folha_area * 0.005 < area < folha_area * 0.03:
+                    peri = cv2.arcLength(cnt, True)
+                    approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
+                    
+                    if len(approx) == 4:
+                        x, y, w_cnt, h_cnt = cv2.boundingRect(approx)
+                        aspect_ratio = float(w_cnt) / h_cnt
+                        
+                        if 0.7 < aspect_ratio < 1.3:  # Quase quadrado
+                            # Evita duplicatas
+                            is_dup = False
+                            for (mx, my, mw, mh) in marcadores:
+                                if abs(x - mx) < 30 and abs(y - my) < 30:
+                                    is_dup = True
+                                    break
+                            
+                            if not is_dup:
+                                marcadores.append((x, y, w_cnt, h_cnt))
+                                cv2.rectangle(img_debug, (x, y), (x+w_cnt, y+h_cnt), (255, 0, 255), 2)
+        
+        print(f"🔍 Marcadores encontrados na folha: {len(marcadores)}")
+
+        # ====================================================================
+        # PASSO 3: RECORTAR USANDO OS 4 MARCADORES
+        # ====================================================================
+        img_gabarito = img_folha.copy()
+        
+        if len(marcadores) >= 4:
+            # Pega os 4 maiores marcadores
+            marcadores = sorted(marcadores, key=lambda m: m[2]*m[3], reverse=True)[:4]
+            
+            # Calcula centros
+            pontos_marc = np.array([[m[0] + m[2]//2, m[1] + m[3]//2] for m in marcadores], dtype=np.float32)
+            
+            # Ordena
+            soma = pontos_marc.sum(axis=1)
+            diff = np.diff(pontos_marc, axis=1)
+            
+            topo_esq = pontos_marc[np.argmin(soma)]
+            baixo_dir = pontos_marc[np.argmax(soma)]
+            topo_dir = pontos_marc[np.argmin(diff)]
+            baixo_esq = pontos_marc[np.argmax(diff)]
+            
+            pontos_ordenados = np.array([topo_esq, topo_dir, baixo_dir, baixo_esq], dtype=np.float32)
+            
+            # Calcula dimensões
+            largura_gab = int(max(
+                np.linalg.norm(topo_dir - topo_esq),
+                np.linalg.norm(baixo_dir - baixo_esq)
+            ))
+            altura_gab = int(max(
+                np.linalg.norm(baixo_esq - topo_esq),
+                np.linalg.norm(baixo_dir - topo_dir)
+            ))
+            
+            # Transformação
+            dst = np.array([[0, 0], [largura_gab-1, 0], [largura_gab-1, altura_gab-1], [0, altura_gab-1]], dtype=np.float32)
+            M = cv2.getPerspectiveTransform(pontos_ordenados, dst)
+            img_gabarito = cv2.warpPerspective(img_folha, M, (largura_gab, altura_gab))
+            img_debug = cv2.warpPerspective(img_debug, M, (largura_gab, altura_gab))
+            
+            print(f"✅ Gabarito recortado: {largura_gab}x{altura_gab}")
+        else:
+            print("⚠️ Sem recorte - marcadores insuficientes")
+            img_gabarito = img_folha
+
+        # ====================================================================
+        # PASSO 4: DETECTAR BOLINHAS DENTRO DO GABARITO RECORTADO
+        # ====================================================================
+        h_gab, w_gab = img_gabarito.shape[:2]
         
         # Configurações do grid (AJUSTE CONFORME SEU GABARITO)
-        # Pelo print, parece ter 25 questões em 5 linhas x 5 colunas
-        colunas_grid = 5  # Quantas colunas de questões
-        linhas_grid = 5   # Quantas linhas de questões
-        num_alternativas = 5  # A, B, C, D, E
+        # Pelo print: 25 questões em 4 colunas x 6-7 linhas (aproximadamente)
+        colunas_grid = 4  # ← AJUSTE: quantas colunas de questões?
+        linhas_grid = 7   # ← AJUSTE: quantas linhas de questões?
+        num_alternativas = 4  # ← AJUSTE: A, B, C, D (4 alternativas)
         
-        altura_linha = h_proc // linhas_grid
-        largura_coluna = w_proc // colunas_grid
+        altura_linha = h_gab // linhas_grid
+        largura_coluna = w_gab // colunas_grid
         
         respostas_aluno = {}
         letras = ['A', 'B', 'C', 'D', 'E']
@@ -3325,7 +3397,7 @@ def processar_imagem_omr():
             x_fim = (coluna + 1) * largura_coluna
             
             # Região da questão
-            regiao = img_processada[y_inicio:y_fim, x_inicio:x_fim]
+            regiao = img_gabarito[y_inicio:y_fim, x_inicio:x_fim]
             
             # Detecta bolinhas
             regiao_gray = cv2.cvtColor(regiao, cv2.COLOR_BGR2GRAY)
@@ -3336,9 +3408,10 @@ def processar_imagem_omr():
             bolinhas = []
             for cnt in contornos:
                 area = cv2.contourArea(cnt)
-                # Bolinhas devem ter tamanho razoável
                 regiao_area = altura_linha * largura_coluna
-                if regiao_area * 0.01 < area < regiao_area * 0.15:
+                
+                # Bolinhas devem ter tamanho razoável (1% a 20% da região)
+                if regiao_area * 0.01 < area < regiao_area * 0.20:
                     x, y, w_b, h_b = cv2.boundingRect(cnt)
                     centro_x = x + w_b // 2
                     centro_y = y + h_b // 2
@@ -3360,11 +3433,13 @@ def processar_imagem_omr():
                 
                 # Desenha amarelo na imagem de debug
                 cx, cy = bolinha_marcada['centro']
-                cv2.circle(img_debug_proc, (int(cx), int(cy)), 8, (0, 255, 255), -1)
+                cv2.circle(img_debug, (int(cx), int(cy)), 8, (0, 255, 255), -1)
             else:
                 respostas_aluno[num_questao] = '?'
 
-        # 6. COMPARA E DESENHA MARCAÇÕES FINAIS
+        # ====================================================================
+        # PASSO 5: COMPARAR E DESENHAR MARCAÇÕES FINAIS
+        # ====================================================================
         detalhes_respostas = []
         acertos = 0
         
@@ -3394,19 +3469,19 @@ def processar_imagem_omr():
                 y_pos = int((linha + 0.5) * altura_linha)
                 x_pos = int((coluna + 0.5) * largura_coluna)
                 
-                cv2.circle(img_debug_proc, (x_pos, y_pos), 15, cor, 3)
-                cv2.putText(img_debug_proc, resposta_aluno, (x_pos-8, y_pos+5),
+                cv2.circle(img_debug, (x_pos, y_pos), 15, cor, 3)
+                cv2.putText(img_debug, resposta_aluno, (x_pos-8, y_pos+5),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, cor, 2)
 
-        # 7. Converte imagem final
-        _, buffer = cv2.imencode('.jpg', img_debug_proc, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        # 6. Converte imagem final
+        _, buffer = cv2.imencode('.jpg', img_debug, [cv2.IMWRITE_JPEG_QUALITY, 70])
         img_base64 = base64.b64encode(buffer).decode('utf-8')
         img_data_url = f"data:image/jpeg;base64,{img_base64}"
 
-        # 8. Calcula nota
+        # 7. Calcula nota
         nota_final = (acertos / total_questoes) * 10 if total_questoes > 0 else 0
 
-        # 9. Busca nomes
+        # 8. Busca nomes
         nome_aluno = f"Aluno ID {id_aluno}"
         nome_prova = f"Prova ID {id_avaliacao}"
         
@@ -3433,9 +3508,10 @@ def processar_imagem_omr():
             "detalhes_respostas": detalhes_respostas,
             "imagem_processada": img_data_url,
             "debug": {
+                "folha_detectada": folha_contour is not None,
                 "marcadores_encontrados": len(marcadores),
                 "respostas_detectadas": respostas_aluno,
-                "dimensoes_gabarito": f"{w_proc}x{h_proc}" if len(marcadores) >= 4 else "N/A"
+                "dimensoes_gabarito": f"{w_gab}x{h_gab}" if len(marcadores) >= 4 else "N/A"
             }
         }), 200
 
