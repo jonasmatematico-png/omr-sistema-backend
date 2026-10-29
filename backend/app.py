@@ -3304,24 +3304,40 @@ def corrigir_por_foto_qr():
 @app.route('/api/salvar_correcao', methods=['POST'])
 def salvar_correcao():
     try:
+        from datetime import datetime
+        import json
+        
         data = request.json
         
         id_aluno = data.get('id_aluno')
-        id_prova = data.get('id_prova')
-        notas_questoes = data.get('notas_questoes')  # Lista de {numero, nota, comentario}
-        nota_final = data.get('nota_final')
+        id_prova = data.get('id_prova') # O frontend envia como 'id_prova'
+        notas_questoes = data.get('notas_questoes', [])
+        nota_final = float(data.get('nota_final', 0.0))
+        nivel_saeb = data.get('nivel_saeb', 'Não classificado')
         
-        if not id_aluno or not id_prova or not notas_questoes:
+        if not id_aluno or not id_prova:
             return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
         
-        # Salva na tabela de resultados
+        # Monta um texto de devolutiva com o resumo de cada questão
+        resumo_devolutiva = "Correção Assistida por IA:\n\n"
+        for q in notas_questoes:
+            num = q.get('numero', '?')
+            nota = q.get('nota', 0)
+            valor_max = q.get('valor_maximo', '?')
+            coment = q.get('comentario', 'Sem comentário')
+            resumo_devolutiva += f"Questão {num}: {nota}/{valor_max} pts\nComentário: {coment}\n---\n"
+        
+        print(f"💾 Salvando resultado: Aluno {id_aluno}, Avaliação {id_prova}, Nota {nota_final}")
+        
+        # INSERE USANDO OS NOMES EXATOS DAS COLUNAS DO SUPABASE
         resultado = supabase_admin.table('resultados').insert({
             'id_aluno': id_aluno,
-            'id_prova': id_prova,
-            'nota_final': nota_final,
-            'notas_detalhadas': notas_questoes,
-            'data_correcao': datetime.now().isoformat(),
-            'status': 'aprovado'
+            'id_avaliacao': id_prova,          # <-- CORREÇÃO 1: Era id_prova
+            'nota_bruta': nota_final,
+            'nota_final': round(nota_final, 1),
+            'nivel_saeb': nivel_saeb,
+            'devolutiva': resumo_devolutiva,   # <-- CORREÇÃO 2: Era notas_detalhadas
+            'data_correcao': datetime.now().isoformat()
         }).execute()
         
         return jsonify({
