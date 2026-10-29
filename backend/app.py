@@ -3180,47 +3180,37 @@ def listar_avaliacoes():
 import cv2
 import numpy as np
 import base64
-from io import BytesIO
-from PIL import Image
-
-import cv2
-import numpy as np
-import base64
-from io import BytesIO
-from PIL import Image
 
 @app.route('/api/processar_imagem_omr', methods=['POST'])
 def processar_imagem_omr():
-    """MÁQUINA 1: OMR completo com recorte, detecção e visualização"""
+    """OMR com detecção robusta de marcadores e rotação automática"""
     try:
         if not request.is_json:
-            return jsonify({"sucesso": False, "erro": "Formato inválido. Envie JSON."}), 400
+            return jsonify({"sucesso": False, "erro": "Formato inválido"}), 400
         
         dados = request.get_json()
         imagem_base64 = dados.get('imagem')
         id_aluno = dados.get('id_aluno')
         id_avaliacao = dados.get('id_avaliacao')
 
-        if not imagem_base64:
-            return jsonify({"sucesso": False, "erro": "Nenhuma imagem enviada"}), 400
-        
-        if not id_aluno or not id_avaliacao:
+        if not imagem_base64 or not id_aluno or not id_avaliacao:
             return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
 
-        # 1. Converte base64 para imagem OpenCV
+        # 1. Converte base64 para imagem
         if ',' in imagem_base64:
             imagem_base64 = imagem_base64.split(',')[1]
         img_bytes = base64.b64decode(imagem_base64)
         nparr = np.frombuffer(img_bytes, np.uint8)
-        img_original = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
-        if img_original is None:
+        if img is None:
             return jsonify({"sucesso": False, "erro": "Imagem inválida"}), 400
 
-        img = img_original.copy()
-        img_debug = img.copy()  # Imagem para debug/visualização
+        img_debug = img.copy()
+        h, w = img.shape[:2]
+        print(f"📐 Imagem original: {w}x{h}")
 
-        # 2. Busca gabarito da prova
+        # 2. Busca gabarito
         questoes = supabase.table('questoes') \
             .select('numero, gabarito') \
             .eq('id_avaliacao', id_avaliacao) \
@@ -3228,48 +3218,56 @@ def processar_imagem_omr():
             .execute()
         
         if not questoes.data:
-            return jsonify({"sucesso": False, "erro": "Prova sem questões na tabela 'questoes'"}), 404
+            return jsonify({"sucesso": False, "erro": "Prova sem questões"}), 404
         
         gabarito_oficial = {q['numero']: q['gabarito'].upper() for q in questoes.data}
         total_questoes = len(gabarito_oficial)
-        print(f"✅ Gabarito: {total_questoes} questões")
 
-        # 3. DETECÇÃO DOS 4 MARCADORES (quadrados pretos nos cantos)
+        # 3. DETECÇÃO ROBUSTA DE MARCADORES
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        img_blur = cv2.GaussianBlur(img_gray, (5, 5), 1)
         
-        # Threshold para detectar áreas escuras (marcadores)
-        _, img_thresh = cv2.threshold(img_blur, 50, 255, cv2.THRESH_BINARY_INV)
-        
-        contours, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Filtra contornos quadrados
+        # Múltiplos thresholds para detectar marcadores em diferentes condições
         marcadores = []
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if 500 < area < 20000:  # Ajuste conforme tamanho do marcador
-                peri = cv2.arcLength(cnt, True)
-                approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
-                if len(approx) == 4:
-                    x, y, w, h = cv2.boundingRect(approx)
-                    aspect_ratio = float(w) / h
-                    if 0.7 < aspect_ratio < 1.3:
-                        marcadores.append((x, y, w, h))
-                        # Desenha no debug
-                        cv2.rectangle(img_debug, (x, y), (x+w, y+h), (0, 255, 0), 3)
+        
+        for thresh_val in [30, 50, 80]:
+            _, img_thresh = cv2.threshold(img_gray, thresh_val, 255, cv2.THRESH_BINARY_INV)
+            contours, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
+                # Ajuste: marcadores devem ter entre 0.5% e 5% da área da imagem
+                img_area = h * w
+                if img_area * 0.005 < area < img_area * 0.05:
+                    peri = cv2.arcLength(cnt, True)
+                    approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
+                    if len(approx) == 4:
+                        x, y, w_cnt, h_cnt = cv2.boundingRect(approx)
+                        aspect_ratio = float(w_cnt) / h_cnt
+                        if 0.7 < aspect_ratio < 1.3:  # Quase quadrado
+                            # Evita duplicatas
+                            is_dup = False
+                            for (mx, my, mw, mh) in marcadores:
+                                if abs(x - mx) < 50 and abs(y - my) < 50:
+                                    is_dup = True
+                                    break
+                            if not is_dup:
+                                marcadores.append((x, y, w_cnt, h_cnt))
+                                cv2.rectangle(img_debug, (x, y), (x+w_cnt, y+h_cnt), (255, 0, 255), 3)
         
         print(f"🔍 Marcadores encontrados: {len(marcadores)}")
-
-        # 4. RECORTA E ALINHA se encontrou 4 marcadores
+        
+        # 4. RECORTA E ALINHA se encontrou 4+ marcadores
         img_processada = img.copy()
+        img_debug_proc = img_debug.copy()
+        
         if len(marcadores) >= 4:
             # Pega os 4 maiores
             marcadores = sorted(marcadores, key=lambda m: m[2]*m[3], reverse=True)[:4]
             
-            # Ordena: topo-esq, topo-dir, baixo-dir, baixo-esq
+            # Calcula centros
             pontos = np.array([[m[0] + m[2]//2, m[1] + m[3]//2] for m in marcadores], dtype=np.float32)
             
-            # Ordenação correta
+            # Ordena: topo-esq, topo-dir, baixo-dir, baixo-esq
             soma = pontos.sum(axis=1)
             diff = np.diff(pontos, axis=1)
             
@@ -3290,37 +3288,33 @@ def processar_imagem_omr():
                 np.linalg.norm(baixo_dir - topo_dir)
             ))
             
-            # Transformação
+            # Transformação de perspectiva
             dst = np.array([[0, 0], [largura-1, 0], [largura-1, altura-1], [0, altura-1]], dtype=np.float32)
             M = cv2.getPerspectiveTransform(pontos_ordenados, dst)
             img_processada = cv2.warpPerspective(img, M, (largura, altura))
-            img_debug = cv2.warpPerspective(img_debug, M, (largura, altura))
+            img_debug_proc = cv2.warpPerspective(img_debug, M, (largura, altura))
             
-            print(f"✅ Gabarito recortado e alinhado: {largura}x{altura}")
+            print(f"✅ Gabarito recortado: {largura}x{altura}")
         else:
-            print("⚠️ Sem recorte (marcadores insuficientes)")
+            print("️ Sem recorte - marcadores insuficientes")
+            img_debug_proc = img_debug
 
-        # 5. DETECÇÃO DAS BOLINHAS (análise por grid)
-        # Ajuste estes valores conforme o layout do SEU gabarito
-        h, w = img_processada.shape[:2]
+        # 5. DETECÇÃO DAS BOLINHAS (apenas na área do gabarito)
+        h_proc, w_proc = img_processada.shape[:2]
         
         # Configurações do grid (AJUSTE CONFORME SEU GABARITO)
-        num_questoes = total_questoes
+        # Pelo print, parece ter 25 questões em 5 linhas x 5 colunas
+        colunas_grid = 5  # Quantas colunas de questões
+        linhas_grid = 5   # Quantas linhas de questões
         num_alternativas = 5  # A, B, C, D, E
         
-        # Divide em linhas (questões) e colunas (alternativas)
-        # Exemplo: se o gabarito tem 10 questões em 2 colunas
-        colunas_grid = 2
-        linhas_grid = (num_questoes + colunas_grid - 1) // colunas_grid
-        
-        altura_linha = h // linhas_grid
-        largura_coluna = w // colunas_grid
+        altura_linha = h_proc // linhas_grid
+        largura_coluna = w_proc // colunas_grid
         
         respostas_aluno = {}
         letras = ['A', 'B', 'C', 'D', 'E']
         
-        for num_questao in range(1, num_questoes + 1):
-            # Calcula posição no grid
+        for num_questao in range(1, min(total_questoes + 1, linhas_grid * colunas_grid + 1)):
             indice = num_questao - 1
             linha = indice // colunas_grid
             coluna = indice % colunas_grid
@@ -3331,46 +3325,42 @@ def processar_imagem_omr():
             x_fim = (coluna + 1) * largura_coluna
             
             # Região da questão
-            regiao_questao = img_processada[y_inicio:y_fim, x_inicio:x_fim]
+            regiao = img_processada[y_inicio:y_fim, x_inicio:x_fim]
             
-            # Detecta bolinhas nesta região
-            # Converte para cinza e threshold
-            regiao_gray = cv2.cvtColor(regiao_questao, cv2.COLOR_BGR2GRAY)
-            _, regiao_thresh = cv2.threshold(regiao_gray, 128, 255, cv2.THRESH_BINARY_INV)
+            # Detecta bolinhas
+            regiao_gray = cv2.cvtColor(regiao, cv2.COLOR_BGR2GRAY)
+            _, regiao_thresh = cv2.threshold(regiao_gray, 150, 255, cv2.THRESH_BINARY_INV)
             
-            # Encontra contornos (bolinhas)
-            contornos_bolinhas, _ = cv2.findContours(regiao_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contornos, _ = cv2.findContours(regiao_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            # Analisa cada bolinha
-            bolinhas_detectadas = []
-            for cnt in contornos_bolinhas:
+            bolinhas = []
+            for cnt in contornos:
                 area = cv2.contourArea(cnt)
-                if 100 < area < 2000:  # Tamanho típico de bolinha
+                # Bolinhas devem ter tamanho razoável
+                regiao_area = altura_linha * largura_coluna
+                if regiao_area * 0.01 < area < regiao_area * 0.15:
                     x, y, w_b, h_b = cv2.boundingRect(cnt)
                     centro_x = x + w_b // 2
                     centro_y = y + h_b // 2
                     
-                    # Determina qual alternativa (A, B, C, D, E) baseado na posição Y
+                    # Determina alternativa baseado na posição Y
                     altura_bolinha = altura_linha // num_alternativas
-                    indice_alternativa = min(centro_y // altura_bolinha, num_alternativas - 1)
-                    letra = letras[indice_alternativa]
+                    idx_alt = min(centro_y // altura_bolinha, num_alternativas - 1)
                     
-                    bolinhas_detectadas.append({
-                        'letra': letra,
+                    bolinhas.append({
+                        'letra': letras[idx_alt],
                         'area': area,
-                        'centro': (centro_x + x_inicio, centro_y + y_inicio),
-                        'x_rel': centro_x,
-                        'y_rel': centro_y
+                        'centro': (centro_x + x_inicio, centro_y + y_inicio)
                     })
             
-            # Seleciona a bolinha com maior área (mais preenchida)
-            if bolinhas_detectadas:
-                bolinha_marcada = max(bolinhas_detectadas, key=lambda b: b['area'])
+            if bolinhas:
+                # Pega a bolinha com maior área (mais preenchida)
+                bolinha_marcada = max(bolinhas, key=lambda b: b['area'])
                 respostas_aluno[num_questao] = bolinha_marcada['letra']
                 
-                # Desenha no debug
+                # Desenha amarelo na imagem de debug
                 cx, cy = bolinha_marcada['centro']
-                cv2.circle(img_debug, (int(cx), int(cy)), 10, (255, 255, 0), -1)  # Amarelo = detectada
+                cv2.circle(img_debug_proc, (int(cx), int(cy)), 8, (0, 255, 255), -1)
             else:
                 respostas_aluno[num_questao] = '?'
 
@@ -3384,9 +3374,9 @@ def processar_imagem_omr():
             
             if correta:
                 acertos += 1
-                cor = (0, 255, 0)  # Verde = acerto
+                cor = (0, 255, 0)  # Verde
             else:
-                cor = (0, 0, 255)  # Vermelho = erro
+                cor = (0, 0, 255)  # Vermelho
             
             detalhes_respostas.append({
                 "questao": num,
@@ -3395,33 +3385,23 @@ def processar_imagem_omr():
                 "gabarito": gabarito
             })
             
-            # Desenha círculo final na imagem de debug
-            # Posição aproximada (ajuste conforme necessário)
+            # Desenha círculo final
             indice = num - 1
-            linha = indice // colunas_grid
-            coluna = indice % colunas_grid
-            
-            y_pos = int((linha + 0.5) * altura_linha)
-            x_pos = int((coluna + 0.5) * largura_coluna)
-            
-            cv2.circle(img_debug, (x_pos, y_pos), 20, cor, 3)
-            cv2.putText(img_debug, f"{resposta_aluno}", (x_pos-10, y_pos+5),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, cor, 2)
+            if indice < linhas_grid * colunas_grid:
+                linha = indice // colunas_grid
+                coluna = indice % colunas_grid
+                
+                y_pos = int((linha + 0.5) * altura_linha)
+                x_pos = int((coluna + 0.5) * largura_coluna)
+                
+                cv2.circle(img_debug_proc, (x_pos, y_pos), 15, cor, 3)
+                cv2.putText(img_debug_proc, resposta_aluno, (x_pos-8, y_pos+5),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, cor, 2)
 
-        # 7. Converte imagem final para base64 (REDUZIDA para não estourar o JSON)
-        # Redimensiona para no máximo 800px de largura
-        h_debug, w_debug = img_debug.shape[:2]
-        if w_debug > 800:
-            ratio = 800 / w_debug
-            new_size = (800, int(h_debug * ratio))
-            img_debug = cv2.resize(img_debug, new_size, interpolation=cv2.INTER_AREA)
-        
-        # Qualidade 60 (bem menor que 85) para reduzir tamanho
-        _, buffer = cv2.imencode('.jpg', img_debug, [cv2.IMWRITE_JPEG_QUALITY, 60])
+        # 7. Converte imagem final
+        _, buffer = cv2.imencode('.jpg', img_debug_proc, [cv2.IMWRITE_JPEG_QUALITY, 70])
         img_base64 = base64.b64encode(buffer).decode('utf-8')
         img_data_url = f"data:image/jpeg;base64,{img_base64}"
-        
-        print(f"📦 Tamanho da imagem base64: {len(img_base64)} bytes")
 
         # 8. Calcula nota
         nota_final = (acertos / total_questoes) * 10 if total_questoes > 0 else 0
@@ -3438,8 +3418,8 @@ def processar_imagem_omr():
             resp_prova = supabase.table("avaliacoes").select("nome").eq("id", id_avaliacao).execute()
             if resp_prova.data:
                 nome_prova = resp_prova.data[0]['nome']
-        except Exception as e:
-            print(f"⚠️ Erro ao buscar nomes: {e}")
+        except:
+            pass
 
         print(f"✅ OMR: {acertos}/{total_questoes} acertos, nota {nota_final:.1f}")
 
@@ -3454,7 +3434,8 @@ def processar_imagem_omr():
             "imagem_processada": img_data_url,
             "debug": {
                 "marcadores_encontrados": len(marcadores),
-                "respostas_detectadas": respostas_aluno
+                "respostas_detectadas": respostas_aluno,
+                "dimensoes_gabarito": f"{w_proc}x{h_proc}" if len(marcadores) >= 4 else "N/A"
             }
         }), 200
 
