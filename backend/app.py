@@ -3183,7 +3183,7 @@ import base64
 
 @app.route('/api/teste_recorte', methods=['POST'])
 def teste_recorte():
-    """Teste de recorte com ordenação correta para gabarito horizontal"""
+    """Teste de recorte com ordenação robusta por centroide"""
     try:
         if not request.is_json:
             return jsonify({"sucesso": False, "erro": "Formato inválido"}), 400
@@ -3271,7 +3271,7 @@ def teste_recorte():
         print(f"🔍 Marcadores encontrados: {len(marcadores)}")
 
         # ====================================================================
-        # RECORTA COM ORDENAÇÃO CORRETA
+        # RECORTA COM ORDENAÇÃO ROBUSTA
         # ====================================================================
         img_recortada = img.copy()
         recorte_ok = False
@@ -3281,39 +3281,69 @@ def teste_recorte():
             marcadores = sorted(marcadores, key=lambda m: m[2]*m[3], reverse=True)[:4]
             
             # Calcula centros
-            centros = [[m[0] + m[2]//2, m[1] + m[3]//2] for m in marcadores]
+            centros = np.array([[m[0] + m[2]//2, m[1] + m[3]//2] for m in marcadores], dtype=np.float32)
             
-            # Ordena por Y (topo para baixo)
-            centros_sorted_y = sorted(centros, key=lambda p: p[1])
+            # Calcula centroide (ponto central dos 4 marcadores)
+            centroide = np.mean(centros, axis=0)
+            print(f" Centroide: {centroide}")
             
-            # Separa em 2 grupos: topo (2 primeiros) e base (2 últimos)
-            topo = sorted(centros_sorted_y[:2], key=lambda p: p[0])  # Ordena por X
-            base = sorted(centros_sorted_y[2:], key=lambda p: p[0])   # Ordena por X
+            # Calcula ângulo de cada ponto em relação ao centroide
+            angulos = []
+            for i, ponto in enumerate(centros):
+                dx = ponto[0] - centroide[0]
+                dy = ponto[1] - centroide[1]
+                angulo = np.arctan2(dy, dx) * 180 / np.pi
+                angulos.append((angulo, i))
+                print(f"   Ponto {i}: ({ponto[0]:.0f}, {ponto[1]:.0f}) ângulo={angulo:.1f}°")
             
-            # Agora temos: topo_esq, topo_dir, baixo_esq, baixo_dir
-            topo_esq = np.array(topo[0], dtype=np.float32)
-            topo_dir = np.array(topo[1], dtype=np.float32)
-            baixo_esq = np.array(base[0], dtype=np.float32)
-            baixo_dir = np.array(base[1], dtype=np.float32)
+            # Ordena por ângulo (sentido horário a partir do topo-esquerdo)
+            # No sistema de coordenadas da imagem (Y cresce para baixo):
+            # -90° = topo, 0° = direita, 90° = baixo, 180°/-180° = esquerda
+            angulos.sort(key=lambda x: x[0])
             
-            print(f"📍 Topo-esq: {topo_esq}")
-            print(f"📍 Topo-dir: {topo_dir}")
-            print(f"📍 Baixo-esq: {baixo_esq}")
-            print(f"📍 Baixo-dir: {baixo_dir}")
+            # Reordena os pontos: topo-esq, topo-dir, baixo-dir, baixo-esq
+            # Ajusta baseado nos ângulos
+            pontos_ordenados = np.zeros((4, 2), dtype=np.float32)
             
-            pontos_ordenados = np.array([topo_esq, topo_dir, baixo_dir, baixo_esq], dtype=np.float32)
+            for idx, (angulo, i) in enumerate(angulos):
+                if -135 <= angulo < -45:  # Topo
+                    if angulo < -90:
+                        pontos_ordenados[0] = centros[i]  # Topo-esq
+                    else:
+                        pontos_ordenados[1] = centros[i]  # Topo-dir
+                elif -45 <= angulo < 45:  # Direita
+                    if angulo < 0:
+                        pontos_ordenados[1] = centros[i]  # Topo-dir
+                    else:
+                        pontos_ordenados[2] = centros[i]  # Baixo-dir
+                elif 45 <= angulo < 135:  # Baixo
+                    if angulo < 90:
+                        pontos_ordenados[2] = centros[i]  # Baixo-dir
+                    else:
+                        pontos_ordenados[3] = centros[i]  # Baixo-esq
+                else:  # Esquerda (-180 a -135 ou 135 a 180)
+                    if angulo > 0:
+                        pontos_ordenados[3] = centros[i]  # Baixo-esq
+                    else:
+                        pontos_ordenados[0] = centros[i]  # Topo-esq
+            
+            print(f"📍 Pontos ordenados:")
+            print(f"   Topo-esq: {pontos_ordenados[0]}")
+            print(f"   Topo-dir: {pontos_ordenados[1]}")
+            print(f"   Baixo-dir: {pontos_ordenados[2]}")
+            print(f"   Baixo-esq: {pontos_ordenados[3]}")
             
             # Calcula dimensões
             largura = int(max(
-                np.linalg.norm(topo_dir - topo_esq),
-                np.linalg.norm(baixo_dir - baixo_esq)
+                np.linalg.norm(pontos_ordenados[1] - pontos_ordenados[0]),
+                np.linalg.norm(pontos_ordenados[2] - pontos_ordenados[3])
             ))
             altura = int(max(
-                np.linalg.norm(baixo_esq - topo_esq),
-                np.linalg.norm(baixo_dir - topo_dir)
+                np.linalg.norm(pontos_ordenados[3] - pontos_ordenados[0]),
+                np.linalg.norm(pontos_ordenados[2] - pontos_ordenados[1])
             ))
             
-            print(f"📐 Dimensões calculadas: {largura}x{altura}")
+            print(f" Dimensões calculadas: {largura}x{altura}")
             
             # Transformação de perspectiva
             dst = np.array([[0, 0], [largura-1, 0], [largura-1, altura-1], [0, altura-1]], dtype=np.float32)
