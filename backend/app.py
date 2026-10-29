@@ -3183,7 +3183,7 @@ import base64
 
 @app.route('/api/teste_recorte', methods=['POST'])
 def teste_recorte():
-    """Teste de recorte ULTRA sensível para marcadores pequenos"""
+    """Teste de recorte com ordenação correta para gabarito horizontal"""
     try:
         if not request.is_json:
             return jsonify({"sucesso": False, "erro": "Formato inválido"}), 400
@@ -3209,12 +3209,10 @@ def teste_recorte():
         print(f"📐 Imagem original: {w}x{h}")
 
         # ====================================================================
-        # DETECÇÃO ULTRA SENSÍVEL
+        # DETECÇÃO DOS MARCADORES
         # ====================================================================
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # Redimensiona para detectar melhor (opcional, mas ajuda)
-        # Se a imagem for muito grande, reduz para 1200px de largura
         scale = 1.0
         if w > 1200:
             scale = 1200 / w
@@ -3225,15 +3223,12 @@ def teste_recorte():
             img_gray_resized = img_gray
         
         h_res, w_res = img_resized.shape[:2]
-        print(f"📏 Imagem processada: {w_res}x{h_res} (scale={scale:.2f})")
         
-        # Tenta MÚLTIPLOS thresholds
         marcadores = []
         
         for thresh_val in [30, 50, 70, 90, 110, 130]:
             _, img_thresh = cv2.threshold(img_gray_resized, thresh_val, 255, cv2.THRESH_BINARY_INV)
             
-            # Limpeza morfológica
             kernel = np.ones((2,2), np.uint8)
             img_thresh = cv2.morphologyEx(img_thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
             
@@ -3242,31 +3237,27 @@ def teste_recorte():
             for cnt in contours:
                 area = cv2.contourArea(cnt)
                 
-                # Marcadores: entre 0.05% e 8% da imagem (MUITO mais amplo)
                 if h_res * w_res * 0.0005 < area < h_res * w_res * 0.08:
                     peri = cv2.arcLength(cnt, True)
-                    approx = cv2.approxPolyDP(cnt, 0.08 * peri, True)  # Mais tolerante
+                    approx = cv2.approxPolyDP(cnt, 0.08 * peri, True)
                     
-                    if len(approx) >= 4 and len(approx) <= 6:  # Aceita 4 a 6 vértices
+                    if len(approx) >= 4 and len(approx) <= 6:
                         x, y, w_cnt, h_cnt = cv2.boundingRect(approx)
                         aspect_ratio = float(w_cnt) / h_cnt
                         
-                        # Aspect ratio muito amplo (0.2 a 5.0)
                         if 0.2 < aspect_ratio < 5.0:
-                            # Verifica se é escuro
                             roi = img_gray_resized[y:y+h_cnt, x:x+w_cnt]
                             media = np.mean(roi)
                             
-                            if media < 120:  # Threshold bem alto
+                            if media < 120:
                                 is_dup = False
                                 for (mx, my, mw, mh) in marcadores:
                                     distancia = np.sqrt((x - mx)**2 + (y - my)**2)
-                                    if distancia < 200:  # Distância maior
+                                    if distancia < 200:
                                         is_dup = True
                                         break
                                 
                                 if not is_dup:
-                                    # Converte coordenadas de volta para imagem original
                                     x_orig = int(x / scale)
                                     y_orig = int(y / scale)
                                     w_orig = int(w_cnt / scale)
@@ -3276,12 +3267,11 @@ def teste_recorte():
                                     cv2.rectangle(img_debug, (x_orig, y_orig), (x_orig+w_orig, y_orig+h_orig), (0, 255, 0), 3)
                                     cv2.putText(img_debug, f"M{len(marcadores)}", (x_orig, y_orig-10),
                                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                                    print(f"✅ Marcador {len(marcadores)}: ({x_orig}, {y_orig}) {w_orig}x{h_orig} área_orig={area/scale**2:.0f} aspect={aspect_ratio:.2f} media={media:.0f}")
         
-        print(f"🔍 Total de marcadores encontrados: {len(marcadores)}")
+        print(f"🔍 Marcadores encontrados: {len(marcadores)}")
 
         # ====================================================================
-        # SE ENCONTROU 4 MARCADORES, RECORTA
+        # RECORTA COM ORDENAÇÃO CORRETA
         # ====================================================================
         img_recortada = img.copy()
         recorte_ok = False
@@ -3291,16 +3281,25 @@ def teste_recorte():
             marcadores = sorted(marcadores, key=lambda m: m[2]*m[3], reverse=True)[:4]
             
             # Calcula centros
-            pontos_marc = np.array([[m[0] + m[2]//2, m[1] + m[3]//2] for m in marcadores], dtype=np.float32)
+            centros = [[m[0] + m[2]//2, m[1] + m[3]//2] for m in marcadores]
             
-            # Ordena
-            soma = pontos_marc.sum(axis=1)
-            diff = np.diff(pontos_marc, axis=1)
+            # Ordena por Y (topo para baixo)
+            centros_sorted_y = sorted(centros, key=lambda p: p[1])
             
-            topo_esq = pontos_marc[np.argmin(soma)]
-            baixo_dir = pontos_marc[np.argmax(soma)]
-            topo_dir = pontos_marc[np.argmin(diff)]
-            baixo_esq = pontos_marc[np.argmax(diff)]
+            # Separa em 2 grupos: topo (2 primeiros) e base (2 últimos)
+            topo = sorted(centros_sorted_y[:2], key=lambda p: p[0])  # Ordena por X
+            base = sorted(centros_sorted_y[2:], key=lambda p: p[0])   # Ordena por X
+            
+            # Agora temos: topo_esq, topo_dir, baixo_esq, baixo_dir
+            topo_esq = np.array(topo[0], dtype=np.float32)
+            topo_dir = np.array(topo[1], dtype=np.float32)
+            baixo_esq = np.array(base[0], dtype=np.float32)
+            baixo_dir = np.array(base[1], dtype=np.float32)
+            
+            print(f"📍 Topo-esq: {topo_esq}")
+            print(f"📍 Topo-dir: {topo_dir}")
+            print(f"📍 Baixo-esq: {baixo_esq}")
+            print(f"📍 Baixo-dir: {baixo_dir}")
             
             pontos_ordenados = np.array([topo_esq, topo_dir, baixo_dir, baixo_esq], dtype=np.float32)
             
@@ -3314,7 +3313,9 @@ def teste_recorte():
                 np.linalg.norm(baixo_dir - topo_dir)
             ))
             
-            # Transformação
+            print(f"📐 Dimensões calculadas: {largura}x{altura}")
+            
+            # Transformação de perspectiva
             dst = np.array([[0, 0], [largura-1, 0], [largura-1, altura-1], [0, altura-1]], dtype=np.float32)
             M = cv2.getPerspectiveTransform(pontos_ordenados, dst)
             img_recortada = cv2.warpPerspective(img, M, (largura, altura))
