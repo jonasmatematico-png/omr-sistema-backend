@@ -3183,7 +3183,7 @@ import base64
 
 @app.route('/api/processar_imagem_omr', methods=['POST'])
 def processar_imagem_omr():
-    """OMR com detecção robusta de folha e fallback inteligente"""
+    """OMR otimizado para gabaritos retangulares horizontais"""
     try:
         if not request.is_json:
             return jsonify({"sucesso": False, "erro": "Formato inválido"}), 400
@@ -3208,7 +3208,7 @@ def processar_imagem_omr():
 
         img_debug = img.copy()
         h, w = img.shape[:2]
-        print(f" Imagem original: {w}x{h}")
+        print(f"📐 Imagem original: {w}x{h}")
 
         # 2. Busca gabarito
         questoes = supabase.table('questoes') \
@@ -3224,7 +3224,7 @@ def processar_imagem_omr():
         total_questoes = len(gabarito_oficial)
 
         # ====================================================================
-        # PASSO 1: DETECTAR A FOLHA (múltiplas técnicas)
+        # DETECÇÃO DE FOLHA RETANGULAR (otimizada para gabaritos horizontais)
         # ====================================================================
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         img_blur = cv2.GaussianBlur(img_gray, (5, 5), 1)
@@ -3232,20 +3232,29 @@ def processar_imagem_omr():
         folha_contour = None
         max_area = 0
         
-        # Técnica 1: Canny edges
-        img_edges = cv2.Canny(img_blur, 50, 150)
+        # Técnica 1: Canny edges com thresholds mais baixos
+        img_edges = cv2.Canny(img_blur, 30, 100)
         contours, _ = cv2.findContours(img_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area > max_area and area > h * w * 0.05:  # Pelo menos 5% da imagem
+            # Aceita retângulos que ocupem pelo menos 3% da imagem
+            if area > h * w * 0.03:
                 peri = cv2.arcLength(cnt, True)
-                approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+                approx = cv2.approxPolyDP(cnt, 0.03 * peri, True)
+                
                 if len(approx) == 4:
-                    max_area = area
-                    folha_contour = approx
+                    # Calcula aspect ratio (largura/altura)
+                    x, y, w_cnt, h_cnt = cv2.boundingRect(approx)
+                    aspect_ratio = float(w_cnt) / h_cnt
+                    
+                    # Aceita retângulos com aspect ratio entre 1.5 e 4.0 (formato paisagem)
+                    if 1.5 < aspect_ratio < 4.0:
+                        if area > max_area:
+                            max_area = area
+                            folha_contour = approx
         
-        # Técnica 2: Threshold adaptativo (se técnica 1 falhou)
+        # Técnica 2: Threshold adaptativo (fallback)
         if folha_contour is None:
             img_thresh = cv2.adaptiveThreshold(img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
                                                 cv2.THRESH_BINARY_INV, 11, 2)
@@ -3253,36 +3262,28 @@ def processar_imagem_omr():
             
             for cnt in contours:
                 area = cv2.contourArea(cnt)
-                if area > max_area and area > h * w * 0.05:
+                if area > h * w * 0.03:
                     peri = cv2.arcLength(cnt, True)
-                    approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+                    approx = cv2.approxPolyDP(cnt, 0.03 * peri, True)
+                    
                     if len(approx) == 4:
-                        max_area = area
-                        folha_contour = approx
-        
-        # Técnica 3: Threshold simples (última tentativa)
-        if folha_contour is None:
-            _, img_thresh = cv2.threshold(img_gray, 200, 255, cv2.THRESH_BINARY_INV)
-            contours, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            for cnt in contours:
-                area = cv2.contourArea(cnt)
-                if area > max_area and area > h * w * 0.05:
-                    peri = cv2.arcLength(cnt, True)
-                    approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
-                    if len(approx) == 4:
-                        max_area = area
-                        folha_contour = approx
+                        x, y, w_cnt, h_cnt = cv2.boundingRect(approx)
+                        aspect_ratio = float(w_cnt) / h_cnt
+                        
+                        if 1.5 < aspect_ratio < 4.0:
+                            if area > max_area:
+                                max_area = area
+                                folha_contour = approx
         
         img_folha = img.copy()
         folha_detectada = False
         
         if folha_contour is not None:
             cv2.drawContours(img_debug, [folha_contour], -1, (0, 255, 0), 3)
-            print(f"✅ Folha detectada, área: {max_area} ({max_area/(h*w)*100:.1f}% da imagem)")
+            print(f"✅ Folha detectada, área: {max_area} ({max_area/(h*w)*100:.1f}%)")
             folha_detectada = True
             
-            # Ordena os 4 pontos da folha
+            # Ordena os 4 pontos
             pontos_folha = folha_contour.reshape(4, 2).astype(np.float32)
             
             soma = pontos_folha.sum(axis=1)
@@ -3311,13 +3312,10 @@ def processar_imagem_omr():
             
             print(f"✅ Folha planificada: {largura}x{altura}")
         else:
-            print("❌ Folha NÃO detectada com nenhuma técnica")
+            print("❌ Folha NÃO detectada")
 
-        # ====================================================================
-        # SE NÃO DETECTOU A FOLHA, RETORNA ERRO CLARO
-        # ====================================================================
+        # Se não detectou, retorna erro claro
         if not folha_detectada:
-            # Converte imagem original para base64 (para mostrar ao usuário)
             _, buffer = cv2.imencode('.jpg', img_debug, [cv2.IMWRITE_JPEG_QUALITY, 70])
             img_base64 = base64.b64encode(buffer).decode('utf-8')
             img_data_url = f"data:image/jpeg;base64,{img_base64}"
@@ -3330,7 +3328,7 @@ def processar_imagem_omr():
             }), 400
 
         # ====================================================================
-        # PASSO 2: DETECTAR MARCADORES DENTRO DA FOLHA
+        # DETECÇÃO DE MARCADORES DENTRO DA FOLHA
         # ====================================================================
         img_folha_gray = cv2.cvtColor(img_folha, cv2.COLOR_BGR2GRAY)
         
@@ -3345,8 +3343,8 @@ def processar_imagem_omr():
             for cnt in contours_marc:
                 area = cv2.contourArea(cnt)
                 
-                # Marcadores devem ser 0.3% a 2% da folha
-                if folha_area * 0.003 < area < folha_area * 0.02:
+                # Marcadores: 0.2% a 1.5% da folha
+                if folha_area * 0.002 < area < folha_area * 0.015:
                     peri = cv2.arcLength(cnt, True)
                     approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
                     
@@ -3368,7 +3366,7 @@ def processar_imagem_omr():
         print(f"🔍 Marcadores encontrados: {len(marcadores)}")
 
         # ====================================================================
-        # PASSO 3: RECORTAR USANDO MARCADORES
+        # RECORTAR USANDO MARCADORES
         # ====================================================================
         img_gabarito = img_folha.copy()
         marcadores_detectados = False
@@ -3409,11 +3407,12 @@ def processar_imagem_omr():
             img_gabarito = img_folha
 
         # ====================================================================
-        # PASSO 4: DETECTAR BOLINHAS
+        # DETECÇÃO DE BOLINHAS
         # ====================================================================
         h_gab, w_gab = img_gabarito.shape[:2]
         
         # Configurações do grid (AJUSTE CONFORME SEU GABARITO)
+        # Pelo seu print: 25 questões em 4 colunas x 7 linhas aproximadamente
         colunas_grid = 4
         linhas_grid = 7
         num_alternativas = 4
@@ -3470,7 +3469,7 @@ def processar_imagem_omr():
                 respostas_aluno[num_questao] = '?'
 
         # ====================================================================
-        # PASSO 5: COMPARAR E DESENHAR
+        # COMPARAR E DESENHAR
         # ====================================================================
         detalhes_respostas = []
         acertos = 0
@@ -3504,15 +3503,15 @@ def processar_imagem_omr():
                 cv2.putText(img_debug, resposta_aluno, (x_pos-8, y_pos+5),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, cor, 2)
 
-        # 6. Converte imagem final
+        # Converte imagem final
         _, buffer = cv2.imencode('.jpg', img_debug, [cv2.IMWRITE_JPEG_QUALITY, 70])
         img_base64 = base64.b64encode(buffer).decode('utf-8')
         img_data_url = f"data:image/jpeg;base64,{img_base64}"
 
-        # 7. Calcula nota
+        # Calcula nota
         nota_final = (acertos / total_questoes) * 10 if total_questoes > 0 else 0
 
-        # 8. Busca nomes
+        # Busca nomes
         nome_aluno = f"Aluno ID {id_aluno}"
         nome_prova = f"Prova ID {id_avaliacao}"
         
