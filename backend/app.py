@@ -3181,22 +3181,20 @@ import cv2
 import numpy as np
 import base64
 
-@app.route('/api/processar_imagem_omr', methods=['POST'])
-def processar_imagem_omr():
-    """OMR calibrado para gabarito 21,2x9,5cm com 26 questões"""
+@app.route('/api/teste_recorte', methods=['POST'])
+def teste_recorte():
+    """Endpoint de teste: APENAS recorta o gabarito e mostra o resultado"""
     try:
         if not request.is_json:
             return jsonify({"sucesso": False, "erro": "Formato inválido"}), 400
         
         dados = request.get_json()
         imagem_base64 = dados.get('imagem')
-        id_aluno = dados.get('id_aluno')
-        id_avaliacao = dados.get('id_avaliacao')
+        
+        if not imagem_base64:
+            return jsonify({"sucesso": False, "erro": "Nenhuma imagem"}), 400
 
-        if not imagem_base64 or not id_aluno or not id_avaliacao:
-            return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
-
-        # 1. Converte base64 para imagem
+        # Converte
         if ',' in imagem_base64:
             imagem_base64 = imagem_base64.split(',')[1]
         img_bytes = base64.b64decode(imagem_base64)
@@ -3210,32 +3208,18 @@ def processar_imagem_omr():
         h, w = img.shape[:2]
         print(f"📐 Imagem original: {w}x{h}")
 
-        # 2. Busca gabarito
-        questoes = supabase.table('questoes') \
-            .select('numero, gabarito') \
-            .eq('id_avaliacao', id_avaliacao) \
-            .order('numero') \
-            .execute()
-        
-        if not questoes.data:
-            return jsonify({"sucesso": False, "erro": "Prova sem questões"}), 404
-        
-        gabarito_oficial = {q['numero']: q['gabarito'].upper() for q in questoes.data}
-        total_questoes = len(gabarito_oficial)
-
         # ====================================================================
-        # DETECÇÃO DOS 4 MARCADORES PRETOS NOS CANTOS
+        # DETECÇÃO DOS 4 MARCADORES PRETOS
         # ====================================================================
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         img_blur = cv2.GaussianBlur(img_gray, (5, 5), 1)
         
-        # Threshold agressivo para pegar só o que é MUITO preto
-        _, img_thresh = cv2.threshold(img_blur, 50, 255, cv2.THRESH_BINARY_INV)
+        # Threshold para pegar só o que é MUITO preto
+        _, img_thresh = cv2.threshold(img_blur, 60, 255, cv2.THRESH_BINARY_INV)
         
         # Limpeza morfológica
         kernel = np.ones((3,3), np.uint8)
         img_thresh = cv2.morphologyEx(img_thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
-        img_thresh = cv2.morphologyEx(img_thresh, cv2.MORPH_OPEN, kernel, iterations=1)
         
         contours, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
@@ -3244,8 +3228,8 @@ def processar_imagem_omr():
         for cnt in contours:
             area = cv2.contourArea(cnt)
             
-            # Marcadores: entre 0.3% e 3% da imagem
-            if h * w * 0.003 < area < h * w * 0.03:
+            # Marcadores: entre 0.2% e 4% da imagem
+            if h * w * 0.002 < area < h * w * 0.04:
                 peri = cv2.arcLength(cnt, True)
                 approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
                 
@@ -3253,33 +3237,35 @@ def processar_imagem_omr():
                     x, y, w_cnt, h_cnt = cv2.boundingRect(approx)
                     aspect_ratio = float(w_cnt) / h_cnt
                     
-                    # Quase quadrado
-                    if 0.6 < aspect_ratio < 1.5:
+                    # Quase quadrado (0.5 a 2.0)
+                    if 0.5 < aspect_ratio < 2.0:
                         # Verifica se é realmente escuro
                         roi = img_gray[y:y+h_cnt, x:x+w_cnt]
                         media = np.mean(roi)
                         
-                        if media < 70:  # Bem escuro
+                        if media < 80:  # Bem escuro
                             is_dup = False
                             for (mx, my, mw, mh) in marcadores:
                                 distancia = np.sqrt((x - mx)**2 + (y - my)**2)
-                                if distancia < 80:
+                                if distancia < 100:
                                     is_dup = True
                                     break
                             
                             if not is_dup:
                                 marcadores.append((x, y, w_cnt, h_cnt))
-                                cv2.rectangle(img_debug, (x, y), (x+w_cnt, y+h_cnt), (255, 0, 255), 3)
-                                cv2.putText(img_debug, f"M{len(marcadores)}", (x, y-5),
-                                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+                                cv2.rectangle(img_debug, (x, y), (x+w_cnt, y+h_cnt), (0, 255, 0), 3)
+                                cv2.putText(img_debug, f"M{len(marcadores)}", (x, y-10),
+                                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
         
         print(f"🔍 Marcadores encontrados: {len(marcadores)}")
+        for i, (x, y, w_cnt, h_cnt) in enumerate(marcadores):
+            print(f"   M{i+1}: ({x}, {y}) tamanho {w_cnt}x{h_cnt}")
 
         # ====================================================================
-        # RECORTA USANDO OS 4 MARCADORES
+        # SE ENCONTROU 4 MARCADORES, RECORTA
         # ====================================================================
-        img_gabarito = img.copy()
-        marcadores_detectados = False
+        img_recortada = img.copy()
+        recorte_ok = False
         
         if len(marcadores) >= 4:
             # Pega os 4 maiores
@@ -3288,7 +3274,7 @@ def processar_imagem_omr():
             # Calcula centros
             pontos_marc = np.array([[m[0] + m[2]//2, m[1] + m[3]//2] for m in marcadores], dtype=np.float32)
             
-            # Ordena
+            # Ordena: topo-esq, topo-dir, baixo-dir, baixo-esq
             soma = pontos_marc.sum(axis=1)
             diff = np.diff(pontos_marc, axis=1)
             
@@ -3297,205 +3283,59 @@ def processar_imagem_omr():
             topo_dir = pontos_marc[np.argmin(diff)]
             baixo_esq = pontos_marc[np.argmax(diff)]
             
+            print(f" Topo-esq: {topo_esq}")
+            print(f"📍 Topo-dir: {topo_dir}")
+            print(f" Baixo-dir: {baixo_dir}")
+            print(f"📍 Baixo-esq: {baixo_esq}")
+            
             pontos_ordenados = np.array([topo_esq, topo_dir, baixo_dir, baixo_esq], dtype=np.float32)
             
-            # Calcula dimensões (aspect ratio ~2.23:1)
-            largura_gab = int(max(
+            # Calcula dimensões
+            largura = int(max(
                 np.linalg.norm(topo_dir - topo_esq),
                 np.linalg.norm(baixo_dir - baixo_esq)
             ))
-            altura_gab = int(max(
+            altura = int(max(
                 np.linalg.norm(baixo_esq - topo_esq),
                 np.linalg.norm(baixo_dir - topo_dir)
             ))
             
+            print(f"📐 Dimensões calculadas: {largura}x{altura}")
+            
             # Transformação de perspectiva
-            dst = np.array([[0, 0], [largura_gab-1, 0], [largura_gab-1, altura_gab-1], [0, altura_gab-1]], dtype=np.float32)
+            dst = np.array([[0, 0], [largura-1, 0], [largura-1, altura-1], [0, altura-1]], dtype=np.float32)
             M = cv2.getPerspectiveTransform(pontos_ordenados, dst)
-            img_gabarito = cv2.warpPerspective(img, M, (largura_gab, altura_gab))
-            img_debug = cv2.warpPerspective(img_debug, M, (largura_gab, altura_gab))
+            img_recortada = cv2.warpPerspective(img, M, (largura, altura))
             
-            marcadores_detectados = True
-            print(f"✅ Gabarito recortado: {largura_gab}x{altura_gab}")
+            recorte_ok = True
+            print(f"✅ Recorte realizado: {largura}x{altura}")
         else:
-            print(f"⚠️ Apenas {len(marcadores)} marcadores, usando imagem inteira")
+            print(f"⚠️ Apenas {len(marcadores)} marcadores encontrados")
 
         # ====================================================================
-        # DETECÇÃO DE BOLINHAS (calibrado para 26 questões em 4 colunas)
+        # CONVERTE PARA MOSTRAR
         # ====================================================================
-        h_gab, w_gab = img_gabarito.shape[:2]
+        # Imagem original com marcadores desenhados
+        _, buffer1 = cv2.imencode('.jpg', img_debug, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        img_debug_base64 = base64.b64encode(buffer1).decode('utf-8')
         
-        # Layout real do gabarito:
-        # Coluna 1: questões 01-07 (7 questões)
-        # Coluna 2: questões 08-14 (7 questões)
-        # Coluna 3: questões 15-21 (7 questões)
-        # Coluna 4: questões 22-26 (5 questões)
+        # Imagem recortada
+        _, buffer2 = cv2.imencode('.jpg', img_recortada, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        img_recortada_base64 = base64.b64encode(buffer2).decode('utf-8')
         
-        colunas_config = [
-            {'inicio': 1, 'fim': 7, 'num_questoes': 7},
-            {'inicio': 8, 'fim': 14, 'num_questoes': 7},
-            {'inicio': 15, 'fim': 21, 'num_questoes': 7},
-            {'inicio': 22, 'fim': 26, 'num_questoes': 5}
-        ]
-        
-        num_alternativas = 4  # A, B, C, D
-        letras = ['A', 'B', 'C', 'D']
-        
-        largura_coluna = w_gab // 4
-        respostas_aluno = {}
-        
-        for col_idx, col_config in enumerate(colunas_config):
-            x_inicio = col_idx * largura_coluna
-            x_fim = (col_idx + 1) * largura_coluna
-            
-            num_questoes_coluna = col_config['num_questoes']
-            altura_linha = h_gab // num_questoes_coluna
-            
-            for i in range(num_questoes_coluna):
-                num_questao = col_config['inicio'] + i
-                
-                y_inicio = i * altura_linha
-                y_fim = (i + 1) * altura_linha
-                
-                # Região da questão
-                regiao = img_gabarito[y_inicio:y_fim, x_inicio:x_fim]
-                
-                # Detecta bolinhas
-                regiao_gray = cv2.cvtColor(regiao, cv2.COLOR_BGR2GRAY)
-                _, regiao_thresh = cv2.threshold(regiao_gray, 140, 255, cv2.THRESH_BINARY_INV)
-                
-                contornos, _ = cv2.findContours(regiao_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                
-                bolinhas = []
-                for cnt in contornos:
-                    area = cv2.contourArea(cnt)
-                    regiao_area = altura_linha * largura_coluna
-                    
-                    # Bolinhas preenchidas: 2% a 25% da região
-                    if regiao_area * 0.02 < area < regiao_area * 0.25:
-                        x, y, w_b, h_b = cv2.boundingRect(cnt)
-                        centro_x = x + w_b // 2
-                        centro_y = y + h_b // 2
-                        
-                        # Determina alternativa baseado na posição X (horizontal)
-                        # A, B, C, D estão distribuídos horizontalmente
-                        largura_bolinha = largura_coluna // num_alternativas
-                        idx_alt = min(centro_x // largura_bolinha, num_alternativas - 1)
-                        
-                        bolinhas.append({
-                            'letra': letras[idx_alt],
-                            'area': area,
-                            'centro': (centro_x + x_inicio, centro_y + y_inicio)
-                        })
-                
-                if bolinhas:
-                    # Pega a bolinha com maior área (mais preenchida)
-                    bolinha_marcada = max(bolinhas, key=lambda b: b['area'])
-                    respostas_aluno[num_questao] = bolinha_marcada['letra']
-                    
-                    # Desenha amarelo na imagem de debug
-                    cx, cy = bolinha_marcada['centro']
-                    cv2.circle(img_debug, (int(cx), int(cy)), 10, (0, 255, 255), -1)
-                    cv2.putText(img_debug, bolinha_marcada['letra'], (int(cx)-5, int(cy)+5),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
-                else:
-                    respostas_aluno[num_questao] = '?'
-
-        # ====================================================================
-        # COMPARAR E DESENHAR MARCAÇÕES FINAIS
-        # ====================================================================
-        detalhes_respostas = []
-        acertos = 0
-        
-        for num, gabarito in gabarito_oficial.items():
-            resposta_aluno = respostas_aluno.get(num, '?')
-            correta = (resposta_aluno == gabarito)
-            
-            if correta:
-                acertos += 1
-                cor = (0, 255, 0)  # Verde
-            else:
-                cor = (0, 0, 255)  # Vermelho
-            
-            detalhes_respostas.append({
-                "questao": num,
-                "resposta": resposta_aluno,
-                "correta": correta,
-                "gabarito": gabarito
-            })
-            
-            # Desenha círculo final na posição aproximada
-            if num <= 26:
-                if num <= 7:
-                    col_idx = 0
-                    row_idx = num - 1
-                elif num <= 14:
-                    col_idx = 1
-                    row_idx = num - 8
-                elif num <= 21:
-                    col_idx = 2
-                    row_idx = num - 15
-                else:
-                    col_idx = 3
-                    row_idx = num - 22
-                
-                num_questoes_coluna = 7 if col_idx < 3 else 5
-                altura_linha = h_gab // num_questoes_coluna
-                largura_coluna_calc = w_gab // 4
-                
-                y_pos = int((row_idx + 0.5) * altura_linha)
-                x_pos = int((col_idx + 0.5) * largura_coluna_calc)
-                
-                cv2.circle(img_debug, (x_pos, y_pos), 12, cor, 2)
-                cv2.putText(img_debug, f"Q{num}:{resposta_aluno}", (x_pos-20, y_pos-15),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.35, cor, 1)
-
-        # Converte imagem final
-        _, buffer = cv2.imencode('.jpg', img_debug, [cv2.IMWRITE_JPEG_QUALITY, 70])
-        img_base64 = base64.b64encode(buffer).decode('utf-8')
-        img_data_url = f"data:image/jpeg;base64,{img_base64}"
-
-        # Calcula nota
-        nota_final = (acertos / total_questoes) * 10 if total_questoes > 0 else 0
-
-        # Busca nomes
-        nome_aluno = f"Aluno ID {id_aluno}"
-        nome_prova = f"Prova ID {id_avaliacao}"
-        
-        try:
-            resp_aluno = supabase.table("alunos").select("nome_completo").eq("id", id_aluno).execute()
-            if resp_aluno.data:
-                nome_aluno = resp_aluno.data[0]['nome_completo']
-                
-            resp_prova = supabase.table("avaliacoes").select("nome").eq("id", id_avaliacao).execute()
-            if resp_prova.data:
-                nome_prova = resp_prova.data[0]['nome']
-        except:
-            pass
-
-        print(f"✅ OMR: {acertos}/{total_questoes} acertos, nota {nota_final:.1f}")
-
         return jsonify({
             "sucesso": True,
-            "nome_aluno": nome_aluno,
-            "nome_prova": nome_prova,
-            "nota_final": round(nota_final, 1),
-            "acertos": acertos,
-            "total_questoes": total_questoes,
-            "detalhes_respostas": detalhes_respostas,
-            "imagem_processada": img_data_url,
-            "debug": {
-                "marcadores_encontrados": len(marcadores),
-                "marcadores_detectados": marcadores_detectados,
-                "respostas_detectadas": respostas_aluno,
-                "dimensoes_gabarito": f"{w_gab}x{h_gab}"
-            }
+            "imagem_original_com_marcadores": f"data:image/jpeg;base64,{img_debug_base64}",
+            "imagem_recortada": f"data:image/jpeg;base64,{img_recortada_base64}",
+            "marcadores_encontrados": len(marcadores),
+            "recorte_ok": recorte_ok,
+            "dimensoes_recorte": f"{img_recortada.shape[1]}x{img_recortada.shape[0]}" if recorte_ok else "N/A"
         }), 200
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"sucesso": False, "erro": str(e)}), 500    
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
    
     
 # ==========================================================
