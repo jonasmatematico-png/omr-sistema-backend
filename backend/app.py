@@ -3310,7 +3310,7 @@ def salvar_correcao():
         data = request.json
         
         id_aluno = data.get('id_aluno')
-        id_prova = data.get('id_prova') # O frontend envia como 'id_prova'
+        id_prova = data.get('id_prova')
         notas_questoes = data.get('notas_questoes', [])
         nota_final = float(data.get('nota_final', 0.0))
         nivel_saeb = data.get('nivel_saeb', 'Não classificado')
@@ -3318,7 +3318,7 @@ def salvar_correcao():
         if not id_aluno or not id_prova:
             return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
         
-        # Monta um texto de devolutiva com o resumo de cada questão
+        # Monta a devolutiva
         resumo_devolutiva = "Correção Assistida por IA:\n\n"
         for q in notas_questoes:
             num = q.get('numero', '?')
@@ -3329,14 +3329,21 @@ def salvar_correcao():
         
         print(f"💾 Salvando resultado: Aluno {id_aluno}, Avaliação {id_prova}, Nota {nota_final}")
         
-        # INSERE USANDO OS NOMES EXATOS DAS COLUNAS DO SUPABASE
+        # 1. DELETAR O REGISTRO ANTIGO (se existir)
+        # Isso evita o erro de "duplicate key"
+        supabase_admin.table('resultados').delete() \
+            .eq('id_aluno', id_aluno) \
+            .eq('id_avaliacao', id_prova) \
+            .execute()
+        
+        # 2. INSERIR O NOVO REGISTRO
         resultado = supabase_admin.table('resultados').insert({
             'id_aluno': id_aluno,
-            'id_avaliacao': id_prova,          # <-- CORREÇÃO 1: Era id_prova
+            'id_avaliacao': id_prova,
             'nota_bruta': nota_final,
             'nota_final': round(nota_final, 1),
             'nivel_saeb': nivel_saeb,
-            'devolutiva': resumo_devolutiva,   # <-- CORREÇÃO 2: Era notas_detalhadas
+            'devolutiva': resumo_devolutiva,
             'data_correcao': datetime.now().isoformat()
         }).execute()
         
