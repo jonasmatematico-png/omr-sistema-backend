@@ -3181,18 +3181,20 @@ import cv2
 import numpy as np
 import base64
 
-@app.route('/api/teste_recorte', methods=['POST'])
-def teste_recorte():
-    """Teste de recorte com detecção híbrida: folha branca + marcadores pretos"""
+@app.route('/api/processar_imagem_omr', methods=['POST'])
+def processar_imagem_omr():
+    """OMR completo: recorte + detecção de bolinhas"""
     try:
         if not request.is_json:
             return jsonify({"sucesso": False, "erro": "Formato inválido"}), 400
         
         dados = request.get_json()
         imagem_base64 = dados.get('imagem')
-        
-        if not imagem_base64:
-            return jsonify({"sucesso": False, "erro": "Nenhuma imagem"}), 400
+        id_aluno = dados.get('id_aluno')
+        id_avaliacao = dados.get('id_avaliacao')
+
+        if not imagem_base64 or not id_aluno or not id_avaliacao:
+            return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
 
         # Converte
         if ',' in imagem_base64:
@@ -3206,9 +3208,24 @@ def teste_recorte():
 
         img_debug = img.copy()
         h, w = img.shape[:2]
-        print(f" Imagem original: {w}x{h}")
+        print(f"📐 Imagem original: {w}x{h}")
 
-        # Recorta 5% das bordas para evitar detectar a borda da foto
+        # Busca gabarito
+        questoes = supabase.table('questoes') \
+            .select('numero, gabarito') \
+            .eq('id_avaliacao', id_avaliacao) \
+            .order('numero') \
+            .execute()
+        
+        if not questoes.data:
+            return jsonify({"sucesso": False, "erro": "Prova sem questões"}), 404
+        
+        gabarito_oficial = {q['numero']: q['gabarito'].upper() for q in questoes.data}
+        total_questoes = len(gabarito_oficial)
+
+        # ====================================================================
+        # RECORTA (mesma lógica do teste_recorte)
+        # ====================================================================
         margin_x = int(w * 0.05)
         margin_y = int(h * 0.05)
         img_crop = img[margin_y:h-margin_y, margin_x:w-margin_x].copy()
@@ -3217,16 +3234,11 @@ def teste_recorte():
         img_gray = cv2.cvtColor(img_crop, cv2.COLOR_BGR2GRAY)
         img_blur = cv2.GaussianBlur(img_gray, (5, 5), 1)
         
-        # ====================================================================
-        # ESTRATÉGIA 1: Detectar a FOLHA BRANCA (contraste com papelão)
-        # ====================================================================
+        # Tenta detectar folha branca
         folha_contour = None
         max_area = 0
         
-        # Threshold para pegar só o que é BEM BRANCO (folha)
         _, img_thresh_branco = cv2.threshold(img_blur, 200, 255, cv2.THRESH_BINARY)
-        
-        # Limpeza morfológica para unir a folha
         kernel_grande = np.ones((15, 15), np.uint8)
         img_thresh_branco = cv2.morphologyEx(img_thresh_branco, cv2.MORPH_CLOSE, kernel_grande, iterations=2)
         
@@ -3234,156 +3246,211 @@ def teste_recorte():
         
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            # Folha deve ocupar 30-95% da imagem recortada
             if h_c * w_c * 0.30 < area < h_c * w_c * 0.95:
                 peri = cv2.arcLength(cnt, True)
                 approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
-                
-                if len(approx) == 4:
-                    if area > max_area:
-                        max_area = area
-                        folha_contour = approx
+                if len(approx) == 4 and area > max_area:
+                    max_area = area
+                    folha_contour = approx
         
-        metodo_usado = "folha_branca" if folha_contour is not None else None
-        
-        # ====================================================================
-        # ESTRATÉGIA 2: Se falhou, detectar os 4 MARCADORES PRETOS
-        # ====================================================================
+        # Fallback: marcadores pretos
         marcadores = []
         if folha_contour is None:
-            print("⚠️ Folha branca não detectada, tentando marcadores pretos...")
-            
             for thresh_val in [30, 50, 70, 90, 110]:
                 _, img_thresh = cv2.threshold(img_blur, thresh_val, 255, cv2.THRESH_BINARY_INV)
-                
                 kernel = np.ones((2,2), np.uint8)
                 img_thresh = cv2.morphologyEx(img_thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
-                
                 contours_m, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 
                 for cnt in contours_m:
                     area = cv2.contourArea(cnt)
-                    
                     if h_c * w_c * 0.0005 < area < h_c * w_c * 0.05:
                         peri = cv2.arcLength(cnt, True)
                         approx = cv2.approxPolyDP(cnt, 0.08 * peri, True)
-                        
                         if len(approx) >= 4 and len(approx) <= 6:
                             x, y, w_cnt, h_cnt = cv2.boundingRect(approx)
                             aspect_ratio = float(w_cnt) / h_cnt
-                            
                             if 0.2 < aspect_ratio < 5.0:
                                 roi = img_gray[y:y+h_cnt, x:x+w_cnt]
                                 media = np.mean(roi)
-                                
                                 if media < 120:
                                     is_dup = False
                                     for (mx, my, mw, mh) in marcadores:
-                                        distancia = np.sqrt((x - mx)**2 + (y - my)**2)
-                                        if distancia < 150:
+                                        if np.sqrt((x - mx)**2 + (y - my)**2) < 150:
                                             is_dup = True
                                             break
-                                    
                                     if not is_dup:
                                         marcadores.append((x, y, w_cnt, h_cnt))
-                                        cv2.rectangle(img_debug[margin_y:h-margin_y, margin_x:w-margin_x], 
-                                                     (x, y), (x+w_cnt, y+h_cnt), (0, 255, 0), 3)
-            
-            if len(marcadores) >= 4:
-                metodo_usado = "marcadores_pretos"
-                print(f"✅ {len(marcadores)} marcadores encontrados")
-            else:
-                print(f"️ Apenas {len(marcadores)} marcadores")
-
-        # ====================================================================
-        # RECORTA
-        # ====================================================================
-        img_recortada = img.copy()
-        recorte_ok = False
+        
+        # Recorta
+        img_gabarito = img.copy()
         pontos_detectados = 0
         
         if folha_contour is not None:
-            # Recorta usando os 4 cantos da folha
             pontos_folha = folha_contour.reshape(4, 2).astype(np.float32)
-            
-            # Ajusta coordenadas (porque cortamos margem)
             pontos_folha[:, 0] += margin_x
             pontos_folha[:, 1] += margin_y
             
-            # Ordena
             soma = pontos_folha.sum(axis=1)
             diff = np.diff(pontos_folha, axis=1)
-            
             topo_esq = pontos_folha[np.argmin(soma)]
             baixo_dir = pontos_folha[np.argmax(soma)]
             topo_dir = pontos_folha[np.argmin(diff)]
             baixo_esq = pontos_folha[np.argmax(diff)]
-            
             pontos_detectados = 4
-            cv2.drawContours(img_debug, [folha_contour + np.array([[margin_x, margin_y]])], -1, (0, 255, 0), 5)
             
         elif len(marcadores) >= 4:
-            # Recorta usando os 4 marcadores
             marcadores = sorted(marcadores, key=lambda m: m[2]*m[3], reverse=True)[:4]
             centros = np.array([[m[0] + m[2]//2 + margin_x, m[1] + m[3]//2 + margin_y] for m in marcadores], dtype=np.float32)
-            
-            # Ordena por Y depois X
             centros_sorted = sorted(centros.tolist(), key=lambda p: (p[1], p[0]))
             topo = sorted(centros_sorted[:2], key=lambda p: p[0])
             base = sorted(centros_sorted[2:], key=lambda p: p[0])
-            
             topo_esq = np.array(topo[0], dtype=np.float32)
             topo_dir = np.array(topo[1], dtype=np.float32)
             baixo_esq = np.array(base[0], dtype=np.float32)
             baixo_dir = np.array(base[1], dtype=np.float32)
-            
             pontos_detectados = 4
         
         if pontos_detectados == 4:
             pontos_ordenados = np.array([topo_esq, topo_dir, baixo_dir, baixo_esq], dtype=np.float32)
-            
-            largura = int(max(
-                np.linalg.norm(topo_dir - topo_esq),
-                np.linalg.norm(baixo_dir - baixo_esq)
-            ))
-            altura = int(max(
-                np.linalg.norm(baixo_esq - topo_esq),
-                np.linalg.norm(baixo_dir - topo_dir)
-            ))
-            
-            print(f"📐 Dimensões: {largura}x{altura} (aspect: {largura/altura:.2f})")
+            largura = int(max(np.linalg.norm(topo_dir - topo_esq), np.linalg.norm(baixo_dir - baixo_esq)))
+            altura = int(max(np.linalg.norm(baixo_esq - topo_esq), np.linalg.norm(baixo_dir - topo_dir)))
             
             if largura > 100 and altura > 100:
                 dst = np.array([[0, 0], [largura-1, 0], [largura-1, altura-1], [0, altura-1]], dtype=np.float32)
                 M = cv2.getPerspectiveTransform(pontos_ordenados, dst)
-                img_recortada = cv2.warpPerspective(img, M, (largura, altura))
-                recorte_ok = True
-                print(f"✅ Recorte realizado: {largura}x{altura} via {metodo_usado}")
+                img_gabarito = cv2.warpPerspective(img, M, (largura, altura))
+                print(f"✅ Gabarito recortado: {largura}x{altura}")
 
-        # Converte para mostrar
-        _, buffer1 = cv2.imencode('.jpg', img_debug, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        img_debug_base64 = base64.b64encode(buffer1).decode('utf-8')
+        # ====================================================================
+        # DETECÇÃO DE BOLINHAS (calibrado para 26 questões em 4 colunas)
+        # ====================================================================
+        h_gab, w_gab = img_gabarito.shape[:2]
         
-        _, buffer2 = cv2.imencode('.jpg', img_recortada, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        img_recortada_base64 = base64.b64encode(buffer2).decode('utf-8')
+        # Redimensiona para tamanho padrão (facilita calibração)
+        tamanho_padrao_largura = 1400
+        tamanho_padrao_altura = int(tamanho_padrao_largura * (h_gab / w_gab))
+        img_gabarito_resized = cv2.resize(img_gabarito, (tamanho_padrao_largura, tamanho_padrao_altura))
+        
+        h_resized, w_resized = img_gabarito_resized.shape[:2]
+        
+        # Layout: 4 colunas (01-07, 08-14, 15-21, 22-26)
+        colunas_config = [
+            {'inicio': 1, 'fim': 7, 'num_questoes': 7},
+            {'inicio': 8, 'fim': 14, 'num_questoes': 7},
+            {'inicio': 15, 'fim': 21, 'num_questoes': 7},
+            {'inicio': 22, 'fim': 26, 'num_questoes': 5}
+        ]
+        
+        num_alternativas = 4
+        letras = ['A', 'B', 'C', 'D']
+        largura_coluna = w_resized // 4
+        
+        respostas_aluno = {}
+        
+        for col_idx, col_config in enumerate(colunas_config):
+            x_inicio = col_idx * largura_coluna
+            x_fim = (col_idx + 1) * largura_coluna
+            
+            num_questoes_coluna = col_config['num_questoes']
+            altura_linha = h_resized // num_questoes_coluna
+            
+            for i in range(num_questoes_coluna):
+                num_questao = col_config['inicio'] + i
+                
+                y_inicio = i * altura_linha
+                y_fim = (i + 1) * altura_linha
+                
+                regiao = img_gabarito_resized[y_inicio:y_fim, x_inicio:x_fim]
+                regiao_gray = cv2.cvtColor(regiao, cv2.COLOR_BGR2GRAY)
+                _, regiao_thresh = cv2.threshold(regiao_gray, 140, 255, cv2.THRESH_BINARY_INV)
+                
+                contornos, _ = cv2.findContours(regiao_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                
+                bolinhas = []
+                for cnt in contornos:
+                    area = cv2.contourArea(cnt)
+                    regiao_area = altura_linha * largura_coluna
+                    
+                    if regiao_area * 0.02 < area < regiao_area * 0.25:
+                        x, y, w_b, h_b = cv2.boundingRect(cnt)
+                        centro_x = x + w_b // 2
+                        centro_y = y + h_b // 2
+                        
+                        largura_bolinha = largura_coluna // num_alternativas
+                        idx_alt = min(centro_x // largura_bolinha, num_alternativas - 1)
+                        
+                        bolinhas.append({
+                            'letra': letras[idx_alt],
+                            'area': area,
+                            'centro': (centro_x + x_inicio, centro_y + y_inicio)
+                        })
+                
+                if bolinhas:
+                    bolinha_marcada = max(bolinhas, key=lambda b: b['area'])
+                    respostas_aluno[num_questao] = bolinha_marcada['letra']
+                    cx, cy = bolinha_marcada['centro']
+                    cv2.circle(img_debug, (int(cx), int(cy)), 10, (0, 255, 255), -1)
+                else:
+                    respostas_aluno[num_questao] = '?'
+
+        # Compara com gabarito
+        detalhes_respostas = []
+        acertos = 0
+        
+        for num, gabarito in gabarito_oficial.items():
+            resposta_aluno = respostas_aluno.get(num, '?')
+            correta = (resposta_aluno == gabarito)
+            
+            if correta:
+                acertos += 1
+            
+            detalhes_respostas.append({
+                "questao": num,
+                "resposta": resposta_aluno,
+                "correta": correta,
+                "gabarito": gabarito
+            })
+        
+        # Calcula nota
+        nota_final = (acertos / total_questoes) * 10 if total_questoes > 0 else 0
+        
+        # Busca nomes
+        nome_aluno = f"Aluno ID {id_aluno}"
+        nome_prova = f"Prova ID {id_avaliacao}"
+        
+        try:
+            resp_aluno = supabase.table("alunos").select("nome_completo").eq("id", id_aluno).execute()
+            if resp_aluno.data:
+                nome_aluno = resp_aluno.data[0]['nome_completo']
+            
+            resp_prova = supabase.table("avaliacoes").select("nome").eq("id", id_avaliacao).execute()
+            if resp_prova.data:
+                nome_prova = resp_prova.data[0]['nome']
+        except:
+            pass
+        
+        print(f"✅ OMR: {acertos}/{total_questoes} acertos, nota {nota_final:.1f}")
+        
+        # Converte imagem final
+        _, buffer = cv2.imencode('.jpg', img_debug, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        img_base64 = base64.b64encode(buffer).decode('utf-8')
         
         return jsonify({
             "sucesso": True,
-            "imagem_original_com_marcadores": f"data:image/jpeg;base64,{img_debug_base64}",
-            "imagem_recortada": f"data:image/jpeg;base64,{img_recortada_base64}",
-            "folha_detectada": folha_contour is not None,
-            "marcadores_encontrados": len(marcadores),
-            "pontos_detectados": pontos_detectados,
-            "metodo_usado": metodo_usado,
-            "recorte_ok": recorte_ok,
-            "dimensoes_recorte": f"{img_recortada.shape[1]}x{img_recortada.shape[0]}" if recorte_ok else "N/A"
+            "nome_aluno": nome_aluno,
+            "nome_prova": nome_prova,
+            "nota_final": round(nota_final, 1),
+            "acertos": acertos,
+            "total_questoes": total_questoes,
+            "detalhes_respostas": detalhes_respostas,
+            "imagem_processada": f"data:image/jpeg;base64,{img_base64}"
         }), 200
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"sucesso": False, "erro": str(e)}), 500  
-
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
     
 # ==========================================================
 # 🚀 ROTA IMAGEM PARA CORETOR DISERTATIVA HTML
