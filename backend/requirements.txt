@@ -12,3 +12,4 @@ python-dotenv>=1.0.0
 reportlab>=4.0.0
 pyzbar>=0.1.9
 imutils>=0.5.4
+requests>=2.31.0
