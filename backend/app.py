@@ -3174,19 +3174,15 @@ def listar_avaliacoes():
     except Exception as e:
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
-#  ==========================================================
-# 🚀 Rota processar imagem HTML
 # ==========================================================
-import cv2
-import numpy as np
-import base64
-
+# 🚀 ROTA PRINCIPAL: PROCESSAR IMAGEM OMR (Integração com services/omr.py)
+# ==========================================================
 @app.route('/api/processar_imagem_omr', methods=['POST'])
 def processar_imagem_omr():
-    """OMR usando apenas marcadores pretos para recorte (já testado e funcionando)"""
+    """Recebe imagem base64, chama o serviço OMR profissional e retorna o resultado"""
     try:
         if not request.is_json:
-            return jsonify({"sucesso": False, "erro": "Formato inválido"}), 400
+            return jsonify({"sucesso": False, "erro": "Formato inválido. Envie JSON."}), 400
         
         dados = request.get_json()
         imagem_base64 = dados.get('imagem')
@@ -3194,23 +3190,9 @@ def processar_imagem_omr():
         id_avaliacao = dados.get('id_avaliacao')
 
         if not imagem_base64 or not id_aluno or not id_avaliacao:
-            return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
+            return jsonify({"sucesso": False, "erro": "Dados incompletos (imagem, id_aluno, id_avaliacao)"}), 400
 
-        # Converte
-        if ',' in imagem_base64:
-            imagem_base64 = imagem_base64.split(',')[1]
-        img_bytes = base64.b64decode(imagem_base64)
-        nparr = np.frombuffer(img_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        if img is None:
-            return jsonify({"sucesso": False, "erro": "Imagem inválida"}), 400
-
-        img_debug = img.copy()
-        h, w = img.shape[:2]
-        print(f"📐 Imagem original: {w}x{h}")
-
-        # Busca gabarito
+        # 1. Buscar gabarito oficial no Supabase
         questoes = supabase.table('questoes') \
             .select('numero, gabarito') \
             .eq('id_avaliacao', id_avaliacao) \
@@ -3218,217 +3200,55 @@ def processar_imagem_omr():
             .execute()
         
         if not questoes.data:
-            return jsonify({"sucesso": False, "erro": "Prova sem questões"}), 404
+            return jsonify({"sucesso": False, "erro": "Prova sem questões cadastradas no banco"}), 404
         
-        gabarito_oficial = {q['numero']: q['gabarito'].upper() for q in questoes.data}
+        gabarito_oficial = [q['gabarito'].upper() for q in questoes.data]
         total_questoes = len(gabarito_oficial)
-        print(f"📋 Gabarito: {total_questoes} questões")
+        print(f"📋 Gabarito oficial carregado: {total_questoes} questões")
 
-        # ====================================================================
-        # RECORTA USANDO APENAS MARCADORES PRETOS (já testado)
-        # ====================================================================
-        margin_x = int(w * 0.05)
-        margin_y = int(h * 0.05)
-        img_crop = img[margin_y:h-margin_y, margin_x:w-margin_x].copy()
-        h_c, w_c = img_crop.shape[:2]
+        # 2. Decodificar e salvar imagem temporária (o omr.py precisa de um arquivo físico)
+        if ',' in imagem_base64:
+            imagem_base64 = imagem_base64.split(',')[1]
+        img_bytes = base64.b64decode(imagem_base64)
         
-        img_gray = cv2.cvtColor(img_crop, cv2.COLOR_BGR2GRAY)
-        img_blur = cv2.GaussianBlur(img_gray, (5, 5), 1)
+        upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+        if not os.path.exists(upload_dir):
+            os.makedirs(upload_dir)
         
-        # Detecta marcadores pretos
-        marcadores = []
-        
-        for thresh_val in [30, 50, 70, 90, 110]:
-            _, img_thresh = cv2.threshold(img_blur, thresh_val, 255, cv2.THRESH_BINARY_INV)
-            kernel = np.ones((2,2), np.uint8)
-            img_thresh = cv2.morphologyEx(img_thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
-            contours_m, _ = cv2.findContours(img_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            for cnt in contours_m:
-                area = cv2.contourArea(cnt)
-                if h_c * w_c * 0.0005 < area < h_c * w_c * 0.05:
-                    peri = cv2.arcLength(cnt, True)
-                    approx = cv2.approxPolyDP(cnt, 0.08 * peri, True)
-                    if len(approx) >= 4 and len(approx) <= 6:
-                        x, y, w_cnt, h_cnt = cv2.boundingRect(approx)
-                        aspect_ratio = float(w_cnt) / h_cnt
-                        if 0.2 < aspect_ratio < 5.0:
-                            roi = img_gray[y:y+h_cnt, x:x+w_cnt]
-                            media = np.mean(roi)
-                            if media < 120:
-                                is_dup = False
-                                for (mx, my, mw, mh) in marcadores:
-                                    if np.sqrt((x - mx)**2 + (y - my)**2) < 150:
-                                        is_dup = True
-                                        break
-                                if not is_dup:
-                                    marcadores.append((x, y, w_cnt, h_cnt))
-        
-        print(f"🔍 Marcadores encontrados: {len(marcadores)}")
-        
-        # Recorta
-        img_gabarito = img.copy()
-        
-        if len(marcadores) >= 4:
-            marcadores = sorted(marcadores, key=lambda m: m[2]*m[3], reverse=True)[:4]
-            centros = np.array([[m[0] + m[2]//2 + margin_x, m[1] + m[3]//2 + margin_y] for m in marcadores], dtype=np.float32)
-            
-            # Ordena por Y depois X
-            centros_sorted = sorted(centros.tolist(), key=lambda p: (p[1], p[0]))
-            topo = sorted(centros_sorted[:2], key=lambda p: p[0])
-            base = sorted(centros_sorted[2:], key=lambda p: p[0])
-            
-            topo_esq = np.array(topo[0], dtype=np.float32)
-            topo_dir = np.array(topo[1], dtype=np.float32)
-            baixo_esq = np.array(base[0], dtype=np.float32)
-            baixo_dir = np.array(base[1], dtype=np.float32)
-            
-            pontos_ordenados = np.array([topo_esq, topo_dir, baixo_dir, baixo_esq], dtype=np.float32)
-            
-            largura = int(max(np.linalg.norm(topo_dir - topo_esq), np.linalg.norm(baixo_dir - baixo_esq)))
-            altura = int(max(np.linalg.norm(baixo_esq - topo_esq), np.linalg.norm(baixo_dir - topo_dir)))
-            
-            print(f"📐 Dimensões: {largura}x{altura}")
-            
-            if largura > 100 and altura > 100:
-                dst = np.array([[0, 0], [largura-1, 0], [largura-1, altura-1], [0, altura-1]], dtype=np.float32)
-                M = cv2.getPerspectiveTransform(pontos_ordenados, dst)
-                img_gabarito = cv2.warpPerspective(img, M, (largura, altura))
-                print(f"✅ Gabarito recortado: {largura}x{altura}")
-            else:
-                print("️ Dimensões inválidas, usando imagem original")
-        else:
-            print(f"️ Apenas {len(marcadores)} marcadores, usando imagem original")
+        temp_path = os.path.join(upload_dir, f'temp_{id_aluno}_{id_avaliacao}.jpg')
+        with open(temp_path, 'wb') as f:
+            f.write(img_bytes)
+        print(f"📁 Imagem temporária salva: {temp_path}")
 
-        # ====================================================================
-        # DETECÇÃO DE BOLINHAS
-        # ====================================================================
-        h_gab, w_gab = img_gabarito.shape[:2]
-        
-        # Redimensiona
-        tamanho_padrao_largura = 1400
-        tamanho_padrao_altura = int(tamanho_padrao_largura * (h_gab / w_gab))
-        img_gabarito_resized = cv2.resize(img_gabarito, (tamanho_padrao_largura, tamanho_padrao_altura))
-        
-        h_resized, w_resized = img_gabarito_resized.shape[:2]
-        
-        # Layout: 4 colunas
-        colunas_config = [
-            {'inicio': 1, 'fim': 7, 'num_questoes': 7},
-            {'inicio': 8, 'fim': 14, 'num_questoes': 7},
-            {'inicio': 15, 'fim': 21, 'num_questoes': 7},
-            {'inicio': 22, 'fim': 26, 'num_questoes': 5}
-        ]
-        
-        num_alternativas = 4
-        letras = ['A', 'B', 'C', 'D']
-        largura_coluna = w_resized // 4
-        
-        respostas_aluno = {}
-        
-        for col_idx, col_config in enumerate(colunas_config):
-            x_inicio = col_idx * largura_coluna
-            x_fim = (col_idx + 1) * largura_coluna
-            
-            num_questoes_coluna = col_config['num_questoes']
-            altura_linha = h_resized // num_questoes_coluna
-            
-            for i in range(num_questoes_coluna):
-                num_questao = col_config['inicio'] + i
-                
-                y_inicio = i * altura_linha
-                y_fim = (i + 1) * altura_linha
-                
-                regiao = img_gabarito_resized[y_inicio:y_fim, x_inicio:x_fim]
-                regiao_gray = cv2.cvtColor(regiao, cv2.COLOR_BGR2GRAY)
-                _, regiao_thresh = cv2.threshold(regiao_gray, 128, 255, cv2.THRESH_BINARY_INV)
-                
-                contornos, _ = cv2.findContours(regiao_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                
-                bolinhas = []
-                for cnt in contornos:
-                    area = cv2.contourArea(cnt)
-                    regiao_area = altura_linha * largura_coluna
-                    
-                    if regiao_area * 0.01 < area < regiao_area * 0.30:
-                        x, y, w_b, h_b = cv2.boundingRect(cnt)
-                        centro_x = x + w_b // 2
-                        centro_y = y + h_b // 2
-                        
-                        largura_bolinha = largura_coluna // num_alternativas
-                        idx_alt = min(centro_x // largura_bolinha, num_alternativas - 1)
-                        
-                        bolinhas.append({
-                            'letra': letras[idx_alt],
-                            'area': area,
-                            'centro': (centro_x + x_inicio, centro_y + y_inicio)
-                        })
-                
-                if bolinhas:
-                    bolinha_marcada = max(bolinhas, key=lambda b: b['area'])
-                    respostas_aluno[num_questao] = bolinha_marcada['letra']
-                    
-                    cx, cy = bolinha_marcada['centro']
-                    cv2.circle(img_debug, (int(cx), int(cy)), 15, (0, 255, 255), -1)
-                    cv2.putText(img_debug, bolinha_marcada['letra'], (int(cx)-8, int(cy)+5),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-                else:
-                    respostas_aluno[num_questao] = '?'
+        # 3. 🔥 CHAMAR O SERVIÇO OMR PROFISSIONAL (A MÁGICA!)
+        from services.omr import processar_imagem
+        respostas_lidas = processar_imagem(temp_path, gabarito_oficial)
+        print(f"✅ Respostas lidas pelo OMR: {respostas_lidas}")
 
-        # Compara com gabarito
+        # 4. Comparar respostas e calcular nota
         detalhes_respostas = []
         acertos = 0
         
-        for num, gabarito in gabarito_oficial.items():
-            resposta_aluno = respostas_aluno.get(num, '?')
+        for i, gabarito in enumerate(gabarito_oficial):
+            num_questao = i + 1
+            resposta_aluno = respostas_lidas[i] if i < len(respostas_lidas) else ''
             correta = (resposta_aluno == gabarito)
             
             if correta:
                 acertos += 1
-                cor = (0, 255, 0)
-            else:
-                cor = (0, 0, 255)
             
             detalhes_respostas.append({
-                "questao": num,
+                "questao": num_questao,
                 "resposta": resposta_aluno,
                 "correta": correta,
                 "gabarito": gabarito
             })
-            
-            # Desenha marcação
-            if num <= 26:
-                if num <= 7:
-                    col_idx = 0
-                    row_idx = num - 1
-                elif num <= 14:
-                    col_idx = 1
-                    row_idx = num - 8
-                elif num <= 21:
-                    col_idx = 2
-                    row_idx = num - 15
-                else:
-                    col_idx = 3
-                    row_idx = num - 22
-                
-                num_questoes_coluna = 7 if col_idx < 3 else 5
-                altura_linha_calc = h_resized // num_questoes_coluna
-                largura_coluna_calc = w_resized // 4
-                
-                y_pos = int((row_idx + 0.5) * altura_linha_calc)
-                x_pos = int((col_idx + 0.5) * largura_coluna_calc)
-                
-                cv2.circle(img_debug, (x_pos, y_pos), 20, cor, 3)
-                cv2.putText(img_debug, f"Q{num}:{resposta_aluno}", (x_pos-25, y_pos-25),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, cor, 2)
 
-        # Calcula nota
         nota_final = (acertos / total_questoes) * 10 if total_questoes > 0 else 0
 
-        # Busca nomes
+        # 5. Buscar nomes para exibir na tela do professor
         nome_aluno = f"Aluno ID {id_aluno}"
         nome_prova = f"Prova ID {id_avaliacao}"
-        
         try:
             resp_aluno = supabase.table("alunos").select("nome_completo").eq("id", id_aluno).execute()
             if resp_aluno.data:
@@ -3437,15 +3257,23 @@ def processar_imagem_omr():
             resp_prova = supabase.table("avaliacoes").select("nome").eq("id", id_avaliacao).execute()
             if resp_prova.data:
                 nome_prova = resp_prova.data[0]['nome']
+        except Exception as e:
+            print(f"⚠️ Erro ao buscar nomes: {e}")
+
+        # 6. Ler a imagem de debug gerada pelo omr.py para mostrar as bolinhas
+        img_debug_path = os.path.join(upload_dir, 'debug_leitura_final.jpg')
+        img_base64_debug = ""
+        if os.path.exists(img_debug_path):
+            with open(img_debug_path, 'rb') as f:
+                img_base64_debug = f"data:image/jpeg;base64,{base64.b64encode(f.read()).decode('utf-8')}"
+
+        # 7. Limpar arquivo temporário para não encher o servidor
+        try:
+            os.remove(temp_path)
         except:
             pass
 
-        print(f"✅ OMR: {acertos}/{total_questoes} acertos, nota {nota_final:.1f}")
-
-        # Converte imagem final
-        _, buffer = cv2.imencode('.jpg', img_debug, [cv2.IMWRITE_JPEG_QUALITY, 70])
-        img_base64 = base64.b64encode(buffer).decode('utf-8')
-
+        # 8. Retornar tudo para o frontend
         return jsonify({
             "sucesso": True,
             "nome_aluno": nome_aluno,
@@ -3454,7 +3282,7 @@ def processar_imagem_omr():
             "acertos": acertos,
             "total_questoes": total_questoes,
             "detalhes_respostas": detalhes_respostas,
-            "imagem_processada": f"data:image/jpeg;base64,{img_base64}"
+            "imagem_processada": img_base64_debug
         }), 200
 
     except Exception as e:
