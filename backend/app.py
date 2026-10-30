@@ -3191,7 +3191,7 @@ def processar_imagem_omr():
         id_avaliacao = dados.get('id_avaliacao')
 
         if not imagem_base64 or not id_aluno or not id_avaliacao:
-            return jsonify({"sucesso": False, "erro": "Dados incompletos (imagem, id_aluno, id_avaliacao)"}), 400
+            return jsonify({"sucesso": False, "erro": "Dados incompletos"}), 400
 
         # 1. Buscar gabarito oficial no Supabase
         questoes = supabase.table('questoes') \
@@ -3201,13 +3201,13 @@ def processar_imagem_omr():
             .execute()
         
         if not questoes.data:
-            return jsonify({"sucesso": False, "erro": "Prova sem questões cadastradas no banco"}), 404
+            return jsonify({"sucesso": False, "erro": "Prova sem questões cadastradas"}), 404
         
         gabarito_oficial = [q['gabarito'].upper() for q in questoes.data]
         total_questoes = len(gabarito_oficial)
         print(f"📋 Gabarito oficial carregado: {total_questoes} questões")
 
-        # 2. Decodificar e salvar imagem temporária (o omr.py precisa de um arquivo físico)
+        # 2. Decodificar e salvar imagem temporária
         if ',' in imagem_base64:
             imagem_base64 = imagem_base64.split(',')[1]
         img_bytes = base64.b64decode(imagem_base64)
@@ -3219,9 +3219,8 @@ def processar_imagem_omr():
         temp_path = os.path.join(upload_dir, f'temp_{id_aluno}_{id_avaliacao}.jpg')
         with open(temp_path, 'wb') as f:
             f.write(img_bytes)
-        print(f"📁 Imagem temporária salva: {temp_path}")
 
-        # 3. 🔥 CHAMAR O SERVIÇO OMR PROFISSIONAL (A MÁGICA!)
+        # 3. 🔥 CHAMAR O SERVIÇO OMR PROFISSIONAL
         from services.omr import processar_imagem
         respostas_lidas = processar_imagem(temp_path, gabarito_oficial)
         print(f"✅ Respostas lidas pelo OMR: {respostas_lidas}")
@@ -3234,7 +3233,6 @@ def processar_imagem_omr():
             num_questao = i + 1
             resposta_aluno = respostas_lidas[i] if i < len(respostas_lidas) else ''
             correta = (resposta_aluno == gabarito)
-            
             if correta:
                 acertos += 1
             
@@ -3247,7 +3245,7 @@ def processar_imagem_omr():
 
         nota_final = (acertos / total_questoes) * 10 if total_questoes > 0 else 0
 
-        # 5. Buscar nomes para exibir na tela do professor
+        # 5. Buscar nomes
         nome_aluno = f"Aluno ID {id_aluno}"
         nome_prova = f"Prova ID {id_avaliacao}"
         try:
@@ -3261,20 +3259,19 @@ def processar_imagem_omr():
         except Exception as e:
             print(f"⚠️ Erro ao buscar nomes: {e}")
 
-        # 6. Ler a imagem de debug gerada pelo omr.py para mostrar as bolinhas
+        # 6. Ler a imagem de debug gerada pelo omr.py
         img_debug_path = os.path.join(upload_dir, 'debug_leitura_final.jpg')
         img_base64_debug = ""
         if os.path.exists(img_debug_path):
             with open(img_debug_path, 'rb') as f:
                 img_base64_debug = f"data:image/jpeg;base64,{base64.b64encode(f.read()).decode('utf-8')}"
 
-        # 7. Limpar arquivo temporário para não encher o servidor
+        # 7. Limpar arquivo temporário
         try:
             os.remove(temp_path)
         except:
             pass
 
-        # 8. Retornar tudo para o frontend
         return jsonify({
             "sucesso": True,
             "nome_aluno": nome_aluno,
