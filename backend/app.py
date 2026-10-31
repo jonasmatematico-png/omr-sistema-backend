@@ -361,22 +361,40 @@ def salvar_correcao_omr():
         
         print(f"✅ Nota calculada: {nota_final} | Nível: {nivel}")
         
-        # 5. Salvar na tabela `resultados` (APENAS CAMPOS QUE EXISTEM!)
+        # 5. Salvar na tabela `resultados` - DELETAR E INSERIR (funciona sempre!)
         dados_resultado = {
             'id_aluno': id_aluno,
             'id_avaliacao': id_avaliacao,
             'nota_final': nota_final,
-            'nivel_saeb': nivel
+            'nivel_saeb': nivel,
+            'acertos': resultado.get('acertos_basico', 0),
+            'total_questoes': num_questoes
         }
         
+        # Primeiro deleta o registro existente (se houver)
         supabase.table('resultados') \
-            .upsert(dados_resultado, on_conflict=['id_aluno', 'id_avaliacao']) \
+            .delete() \
+            .eq('id_aluno', id_aluno) \
+            .eq('id_avaliacao', id_avaliacao) \
+            .execute()
+        
+        # Depois insere o novo
+        supabase.table('resultados') \
+            .insert(dados_resultado) \
             .execute()
         
         print(f"💾 Resultado salvo na tabela 'resultados'")
         
         # 6. Salvar detalhes das respostas na tabela `respostas`
         if detalhes_respostas:
+            # Primeiro deleta as respostas existentes
+            supabase.table('respostas') \
+                .delete() \
+                .eq('id_aluno', id_aluno) \
+                .eq('id_avaliacao', id_avaliacao) \
+                .execute()
+            
+            # Depois insere as novas
             lista_respostas = []
             for item in detalhes_respostas:
                 questao_num = item.get('questao', item.get('numero', 0))
@@ -408,7 +426,7 @@ def salvar_correcao_omr():
             
             if lista_respostas:
                 supabase.table('respostas') \
-                    .upsert(lista_respostas, on_conflict=['id_aluno', 'id_avaliacao', 'id_questao']) \
+                    .insert(lista_respostas) \
                     .execute()
                 print(f"💾 {len(lista_respostas)} respostas salvas na tabela 'respostas'")
         
