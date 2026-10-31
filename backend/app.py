@@ -304,9 +304,9 @@ def salvar_correcao_omr():
         id_aluno = int(dados.get('id_aluno'))
         id_avaliacao = int(dados.get('id_avaliacao'))
         detalhes_respostas = dados.get('detalhes_respostas', [])
-        
+
         print(f"📥 Recebido: aluno={id_aluno}, prova={id_avaliacao}, {len(detalhes_respostas)} respostas")
-        
+
         # 1. Buscar o TIPO da avaliação no Supabase
         resp_avaliacao = supabase.table('avaliacoes') \
             .select('tipo, numero_questoes') \
@@ -322,9 +322,9 @@ def salvar_correcao_omr():
         
         print(f"📋 Tipo da prova: {tipo_avaliacao}")
         
-        # 2. Buscar as questões com seus níveis
+        # 2. Buscar as questões com seus níveis e valores
         resp_questoes = supabase.table('questoes') \
-            .select('numero, gabarito, nivel, valor') \
+            .select('id, numero, gabarito, nivel, valor') \
             .eq('id_avaliacao', id_avaliacao) \
             .order('numero') \
             .execute()
@@ -332,7 +332,7 @@ def salvar_correcao_omr():
         questoes_config = resp_questoes.data if resp_questoes.data else []
         print(f"📝 Questões encontradas: {len(questoes_config)}")
         
-        # 3. Extrair respostas do aluno
+        # 3. Extrair respostas do aluno em formato de lista simples
         respostas_aluno_lista = []
         for item in detalhes_respostas:
             questao_num = item.get('questao', item.get('numero', 0))
@@ -341,7 +341,7 @@ def salvar_correcao_omr():
         
         print(f"✏️ Respostas do aluno: {respostas_aluno_lista}")
         
-        # 4. CALCULAR A NOTA (usando saeb.py)
+        # 4. CALCULAR A NOTA (usando seu saeb.py)
         is_saeb = 'SAEB' in tipo_avaliacao
         
         if is_saeb:
@@ -353,7 +353,7 @@ def salvar_correcao_omr():
             from services.saeb import calcular_nota_comum
             resultado = calcular_nota_comum(questoes_config, respostas_aluno_lista)
             # Normaliza para escala 0-10
-            acertos = resultado['acertos_basico']
+            acertos = resultado.get('acertos_basico', 0)
             resultado['nota'] = round((acertos / num_questoes) * 10, 1) if num_questoes > 0 else 0.0
         
         nota_final = resultado['nota']
@@ -361,50 +361,49 @@ def salvar_correcao_omr():
         
         print(f"✅ Nota calculada: {nota_final} | Nível: {nivel}")
         
-        # 5. Salvar na tabela `resultados` - DELETAR E INSERIR (funciona sempre!)
-        dados_resultado = {
-            'id_aluno': id_aluno,
-            'id_avaliacao': id_avaliacao,
-            'nota_final': nota_final,
-            'nivel_saeb': nivel,
-            'acertos': resultado.get('acertos_basico', 0),
-            'total_questoes': num_questoes
-        }
-        
-        # Primeiro deleta o registro existente (se houver)
+        # ==========================================================
+        # 5. SALVAR EM 'resultados' (MÉTODO SEGURO: DELETE + INSERT)
+        # ==========================================================
+        # Deleta qualquer registro existente para este aluno nesta prova
         supabase.table('resultados') \
             .delete() \
             .eq('id_aluno', id_aluno) \
             .eq('id_avaliacao', id_avaliacao) \
             .execute()
         
-        # Depois insere o novo
+        # Insere o novo registro (sem risco de duplicidade)
         supabase.table('resultados') \
-            .insert(dados_resultado) \
+            .insert({
+                'id_aluno': id_aluno,
+                'id_avaliacao': id_avaliacao,
+                'nota_final': nota_final,
+                'nivel_saeb': nivel
+            }) \
             .execute()
         
         print(f"💾 Resultado salvo na tabela 'resultados'")
         
-        # 6. Salvar detalhes das respostas na tabela `respostas`
+        # ==========================================================
+        # 6. SALVAR EM 'respostas' (MÉTODO SEGURO: DELETE + INSERT)
+        # ==========================================================
+        # Deleta as respostas antigas deste aluno nesta prova
+        supabase.table('respostas') \
+            .delete() \
+            .eq('id_aluno', id_aluno) \
+            .eq('id_avaliacao', id_avaliacao) \
+            .execute()
+        
         if detalhes_respostas:
-            # Primeiro deleta as respostas existentes
-            supabase.table('respostas') \
-                .delete() \
-                .eq('id_aluno', id_aluno) \
-                .eq('id_avaliacao', id_avaliacao) \
-                .execute()
-            
-            # Depois insere as novas
             lista_respostas = []
             for item in detalhes_respostas:
                 questao_num = item.get('questao', item.get('numero', 0))
                 resposta = item.get('resposta', item.get('resposta_aluno', ''))
                 correta = item.get('correta', False)
                 
-                # Buscar o ID da questão pelo número
+                # Buscar o ID real da questão no banco para vincular corretamente
                 questao_id = None
                 for q in questoes_config:
-                    if q.get('numero') == questao_num:
+                    if str(q.get('numero')) == str(questao_num):
                         resp_id = supabase.table('questoes') \
                             .select('id') \
                             .eq('id_avaliacao', id_avaliacao) \
@@ -421,7 +420,7 @@ def salvar_correcao_omr():
                         'id_avaliacao': id_avaliacao,
                         'id_questao': questao_id,
                         'resposta_aluno': str(resposta).strip().upper(),
-                        'correta': correta
+                        'correta': bool(correta)
                     })
             
             if lista_respostas:
