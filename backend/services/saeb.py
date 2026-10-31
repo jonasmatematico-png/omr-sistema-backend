@@ -12,19 +12,21 @@ PESOS = {
 }
 
 # ================================================
-# RÉGUA DE NÍVEIS (definida pela escola)
+# RÉGUA DE NÍVEIS (CORRIGIDA - VALORES DA ESCOLA)
 # ================================================
-# 🔴 Abaixo do Básico: 0,00 até 4,99
-# 🟡 Básico:           5,00 até 6,49
-# 🔵 Adequado:         6,50 até 8,49
-# 🟢 Avançado:         8,50 até 10,00
-
 def calcular_nivel(nota):
-    if nota < 5.00:
+    """
+    Classifica a nota conforme a régua oficial da escola:
+    - Abaixo do Básico: 0,00 até 4,92
+    - Básico:           5,00 até 6,42
+    - Adequado:         6,51 até 8,34
+    - Avançado:         8,67 até 10,00
+    """
+    if nota <= 4.92:
         return 'Abaixo do Básico'
-    elif nota < 6.50:
+    elif nota <= 6.42:
         return 'Básico'
-    elif nota < 8.50:
+    elif nota <= 8.34:
         return 'Adequado'
     else:
         return 'Avançado'

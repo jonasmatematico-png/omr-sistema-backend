@@ -342,8 +342,9 @@ def salvar_correcao_omr():
         print(f"✏️ Respostas do aluno: {respostas_aluno_lista}")
         
         # 4. CALCULAR A NOTA (usando seu saeb.py)
+        # 4. CALCULAR A NOTA (usando saeb.py)
         is_saeb = 'SAEB' in tipo_avaliacao
-        
+
         if is_saeb:
             print("🎯 Usando cálculo SAEB (com pesos)")
             from services.saeb import calcular_nota_saeb
@@ -353,35 +354,36 @@ def salvar_correcao_omr():
             from services.saeb import calcular_nota_comum
             resultado = calcular_nota_comum(questoes_config, respostas_aluno_lista)
             # Normaliza para escala 0-10
-            acertos = resultado.get('acertos_basico', 0)
-            resultado['nota'] = round((acertos / num_questoes) * 10, 1) if num_questoes > 0 else 0.0
-        
+            acertos = resultado['acertos_basico']
+            resultado['nota'] = round((acertos / num_questoes) * 10, 2) if num_questoes > 0 else 0.0
+
         nota_final = resultado['nota']
         nivel = resultado.get('nivel', 'Básico')
-        
+
         print(f"✅ Nota calculada: {nota_final} | Nível: {nivel}")
-        
+
         # ==========================================================
-        # 5. SALVAR EM 'resultados' (MÉTODO SEGURO: DELETE + INSERT)
-        # ==========================================================
-        # Deleta qualquer registro existente para este aluno nesta prova
+        # 5. Salvar na tabela `resultados` com formato correto
+        dados_resultado = {
+            'id_aluno': id_aluno,
+            'id_avaliacao': id_avaliacao,
+            'nota_bruta': round(nota_final, 2),      # ✅ 2 casas decimais (ex: 7.00)
+            'nota_final': int(round(nota_final)),    # ✅ Sem casas decimais (ex: 7)
+            'nivel_saeb': nivel
+        }
+
+        # Deleta registro existente (se houver) e insere novo
         supabase.table('resultados') \
             .delete() \
             .eq('id_aluno', id_aluno) \
             .eq('id_avaliacao', id_avaliacao) \
             .execute()
-        
-        # Insere o novo registro (sem risco de duplicidade)
+
         supabase.table('resultados') \
-            .insert({
-                'id_aluno': id_aluno,
-                'id_avaliacao': id_avaliacao,
-                'nota_final': nota_final,
-                'nivel_saeb': nivel
-            }) \
+            .insert(dados_resultado) \
             .execute()
-        
-        print(f"💾 Resultado salvo na tabela 'resultados'")
+
+        print(f"💾 Resultado salvo: nota_bruta={dados_resultado['nota_bruta']}, nota_final={dados_resultado['nota_final']}, nivel={nivel}")
         
         # ==========================================================
         # 6. SALVAR EM 'respostas' (MÉTODO SEGURO: DELETE + INSERT)
