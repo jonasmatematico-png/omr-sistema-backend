@@ -311,46 +311,71 @@ def salvar_correcao_omr():
     detalhes_respostas = dados.get('detalhes_respostas', [])
 
     try:
+        # Se não tem id_aluno, busca pelo nome
         if not id_aluno:
             resp_turma = supabase.table("turmas").select("id").eq("nome", turma_nome).execute()
             if not resp_turma.data:
                 return jsonify({"sucesso": False, "erro": f"Turma '{turma_nome}' não encontrada"}), 404
             id_turma = resp_turma.data[0]['id']
 
-            resp_aluno = supabase.table("alunos").select("id").eq("nome", nome_aluno).eq("id_turma", id_turma).execute()
+            resp_aluno = supabase.table("alunos").select("id").eq("nome_completo", nome_aluno).eq("id_turma", id_turma).execute()
             if not resp_aluno.data:
                 return jsonify({"sucesso": False, "erro": f"Aluno '{nome_aluno}' não encontrado"}), 404
             id_aluno = resp_aluno.data[0]['id']
 
+        # Calcula o nível SAEB
         nivel = "Abaixo do Básico"
-        if nota_final >= 8: nivel = "Avançado"
-        elif nota_final >= 6: nivel = "Adequado"
-        elif nota_final >= 4: nivel = "Básico"
+        if nota_final >= 8.5:
+            nivel = "Avançado"
+        elif nota_final >= 6.5:
+            nivel = "Adequado"
+        elif nota_final >= 5.0:
+            nivel = "Básico"
 
+        # ✅ SALVA O RESULTADO (UPSERT - atualiza se já existir)
         supabase.table("resultados").upsert({
-                "id_aluno": id_aluno,
-                "id_avaliacao": id_avaliacao,
-                "nota_bruta": nota_final,
-                "nota_final": round(nota_final),
-                # ... resto dos campos
-            }, on_conflict="id_avaliacao,id_aluno").execute()
+            "id_aluno": int(id_aluno),
+            "id_avaliacao": int(id_avaliacao),
+            "nota_bruta": nota_final,
+            "nota_final": round(nota_final, 1),
+            "nivel_saeb": nivel
+        }, on_conflict="id_avaliacao,id_aluno").execute()
         
-        if detalhes_respostas:
-            print(f"💾 Salvando {len(detalhes_respostas)} respostas detalhadas no banco...")
-            for item in detalhes_respostas:
-                supabase.table("respostas").insert({
-                    "id_avaliacao": id_avaliacao,
-                    "id_aluno": id_aluno,
-                    "id_questao": item.get('questao'),
-                    "resposta_aluno": item.get('resposta', ''),
-                    "correta": item.get('correta', False)
-                }).execute()
-            print("✅ Respostas detalhadas salvas com sucesso!")
+        print(f"✅ Resultado salvo para aluno {id_aluno}, prova {id_avaliacao}, nota {nota_final}")
 
-        return jsonify({'sucesso': True, 'mensagem': f'Nota {round(nota_final)} e respostas gravadas com sucesso!'}), 200
+        # ✅ SALVA AS RESPOSTAS DETALHADAS (UPSERT - atualiza se já existir)
+        if detalhes_respostas and len(detalhes_respostas) > 0:
+            print(f"💾 Salvando {len(detalhes_respostas)} respostas detalhadas no banco...")
+            
+            # Constrói a lista de respostas para salvar
+            lista_respostas = []
+            for item in detalhes_respostas:
+                lista_respostas.append({
+                    "id_avaliacao": int(id_avaliacao),
+                    "id_aluno": int(id_aluno),
+                    "id_questao": int(item.get('questao', item.get('id_questao', 0))),
+                    "resposta_aluno": str(item.get('resposta', item.get('resposta_aluno', ''))),
+                    "correta": bool(item.get('correta', False))
+                })
+            
+            # Faz o upsert de todas as respostas de uma vez
+            supabase.table("respostas").upsert(
+                lista_respostas,
+                on_conflict="id_avaliacao,id_aluno,id_questao"
+            ).execute()
+            
+            print(f"✅ {len(lista_respostas)} respostas salvas com sucesso!")
+
+        return jsonify({
+            'sucesso': True,
+            'mensagem': f'Nota {round(nota_final, 1)} e {len(detalhes_respostas)} respostas gravadas com sucesso!',
+            'nivel': nivel
+        }), 200
 
     except Exception as e:
         print(f"❌ ERRO AO SALVAR: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'sucesso': False, 'erro': str(e)}), 500
 
 @app.route('/api/avaliacoes/criar', methods=['POST'])
