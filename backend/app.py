@@ -327,15 +327,14 @@ def salvar_correcao_omr():
         elif nota_final >= 6: nivel = "Adequado"
         elif nota_final >= 4: nivel = "Básico"
 
-        supabase.table("resultados").insert({
-            "id_aluno": id_aluno,
-            "id_avaliacao": id_avaliacao,
-            "nota_bruta": nota_final,
-            "nota_final": round(nota_final),
-            "nivel_saeb": nivel,
-            "devolutiva": f"O aluno acertou questões totalizando nota {nota_final}."
-        }).execute()
-
+        supabase.table("resultados").upsert({
+                "id_aluno": id_aluno,
+                "id_avaliacao": id_avaliacao,
+                "nota_bruta": nota_final,
+                "nota_final": round(nota_final),
+                # ... resto dos campos
+            }, on_conflict="id_avaliacao,id_aluno").execute()
+        
         if detalhes_respostas:
             print(f"💾 Salvando {len(detalhes_respostas)} respostas detalhadas no banco...")
             for item in detalhes_respostas:
