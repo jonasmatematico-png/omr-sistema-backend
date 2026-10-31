@@ -299,84 +299,135 @@ def get_gabarito_avaliacao(avaliacao_id):
 
 @app.route('/api/salvar_correcao_omr', methods=['POST'])
 def salvar_correcao_omr():
-    if not request.is_json:
-        return jsonify({'erro': 'Formato inválido. Envie JSON.'}), 400
-
-    dados = request.get_json()
-    id_aluno = dados.get('id_aluno')
-    id_avaliacao = dados.get('id_avaliacao', 1)
-    nome_aluno = dados.get('nome', '')
-    turma_nome = dados.get('turma', '')
-    nota_final = float(dados.get('nota_final', 0.0))
-    detalhes_respostas = dados.get('detalhes_respostas', [])
-
     try:
-        # Se não tem id_aluno, busca pelo nome
-        if not id_aluno:
-            resp_turma = supabase.table("turmas").select("id").eq("nome", turma_nome).execute()
-            if not resp_turma.data:
-                return jsonify({"sucesso": False, "erro": f"Turma '{turma_nome}' não encontrada"}), 404
-            id_turma = resp_turma.data[0]['id']
-
-            resp_aluno = supabase.table("alunos").select("id").eq("nome_completo", nome_aluno).eq("id_turma", id_turma).execute()
-            if not resp_aluno.data:
-                return jsonify({"sucesso": False, "erro": f"Aluno '{nome_aluno}' não encontrado"}), 404
-            id_aluno = resp_aluno.data[0]['id']
-
-        # Calcula o nível SAEB
-        nivel = "Abaixo do Básico"
-        if nota_final >= 8.5:
-            nivel = "Avançado"
-        elif nota_final >= 6.5:
-            nivel = "Adequado"
-        elif nota_final >= 5.0:
-            nivel = "Básico"
-
-        # ✅ SALVA O RESULTADO (UPSERT - atualiza se já existir)
-        supabase.table("resultados").upsert({
-            "id_aluno": int(id_aluno),
-            "id_avaliacao": int(id_avaliacao),
-            "nota_bruta": nota_final,
-            "nota_final": round(nota_final, 1),
-            "nivel_saeb": nivel
-        }, on_conflict="id_avaliacao,id_aluno").execute()
+        dados = request.get_json()
+        id_aluno = int(dados.get('id_aluno'))
+        id_avaliacao = int(dados.get('id_avaliacao'))
+        detalhes_respostas = dados.get('detalhes_respostas', [])
         
-        print(f"✅ Resultado salvo para aluno {id_aluno}, prova {id_avaliacao}, nota {nota_final}")
-
-        # ✅ SALVA AS RESPOSTAS DETALHADAS (UPSERT - atualiza se já existir)
-        if detalhes_respostas and len(detalhes_respostas) > 0:
-            print(f"💾 Salvando {len(detalhes_respostas)} respostas detalhadas no banco...")
-            
-            # Constrói a lista de respostas para salvar
+        print(f"📥 Recebido: aluno={id_aluno}, prova={id_avaliacao}, {len(detalhes_respostas)} respostas")
+        
+        # 1. Buscar o TIPO da avaliação no Supabase
+        resp_avaliacao = supabase.table('avaliacoes') \
+            .select('tipo, numero_questoes') \
+            .eq('id', id_avaliacao) \
+            .single() \
+            .execute()
+        
+        if not resp_avaliacao.data:
+            return jsonify({"sucesso": False, "erro": "Avaliação não encontrada"}), 404
+        
+        tipo_avaliacao = (resp_avaliacao.data.get('tipo') or '').upper()
+        num_questoes = resp_avaliacao.data.get('numero_questoes', 10)
+        
+        print(f"📋 Tipo da prova: {tipo_avaliacao}")
+        
+        # 2. Buscar as questões com seus níveis
+        resp_questoes = supabase.table('questoes') \
+            .select('numero, gabarito, nivel, valor') \
+            .eq('id_avaliacao', id_avaliacao) \
+            .order('numero') \
+            .execute()
+        
+        questoes_config = resp_questoes.data if resp_questoes.data else []
+        print(f"📝 Questões encontradas: {len(questoes_config)}")
+        
+        # 3. Extrair respostas do aluno
+        respostas_aluno_lista = []
+        for item in detalhes_respostas:
+            questao_num = item.get('questao', item.get('numero', 0))
+            resposta = item.get('resposta', item.get('resposta_aluno', ''))
+            respostas_aluno_lista.append(str(resposta).strip().upper())
+        
+        print(f"✏️ Respostas do aluno: {respostas_aluno_lista}")
+        
+        # 4. CALCULAR A NOTA (usando saeb.py)
+        is_saeb = 'SAEB' in tipo_avaliacao
+        
+        if is_saeb:
+            print("🎯 Usando cálculo SAEB (com pesos)")
+            from services.saeb import calcular_nota_saeb
+            resultado = calcular_nota_saeb(questoes_config, respostas_aluno_lista)
+        else:
+            print("📊 Usando cálculo simples (1 ponto por questão)")
+            from services.saeb import calcular_nota_comum
+            resultado = calcular_nota_comum(questoes_config, respostas_aluno_lista)
+            # Normaliza para escala 0-10
+            acertos = resultado['acertos_basico']
+            resultado['nota'] = round((acertos / num_questoes) * 10, 1) if num_questoes > 0 else 0.0
+        
+        nota_final = resultado['nota']
+        nivel = resultado.get('nivel', 'Básico')
+        
+        print(f"✅ Nota calculada: {nota_final} | Nível: {nivel}")
+        
+        # 5. Salvar na tabela `resultados` (UPSERT para evitar duplicidade)
+        dados_resultado = {
+            'id_aluno': id_aluno,
+            'id_avaliacao': id_avaliacao,
+            'nota_final': nota_final,
+            'nivel_saeb': nivel,
+            'acertos': resultado.get('acertos_basico', 0),
+            'total_questoes': num_questoes
+        }
+        
+        supabase.table('resultados') \
+            .upsert(dados_resultado, on_conflict=['id_aluno', 'id_avaliacao']) \
+            .execute()
+        
+        print(f"💾 Resultado salvo na tabela 'resultados'")
+        
+        # 6. Salvar detalhes das respostas na tabela `respostas`
+        if detalhes_respostas:
             lista_respostas = []
             for item in detalhes_respostas:
-                lista_respostas.append({
-                    "id_avaliacao": int(id_avaliacao),
-                    "id_aluno": int(id_aluno),
-                    "id_questao": int(item.get('questao', item.get('id_questao', 0))),
-                    "resposta_aluno": str(item.get('resposta', item.get('resposta_aluno', ''))),
-                    "correta": bool(item.get('correta', False))
-                })
+                questao_num = item.get('questao', item.get('numero', 0))
+                resposta = item.get('resposta', item.get('resposta_aluno', ''))
+                correta = item.get('correta', False)
+                
+                # Buscar o ID da questão pelo número
+                questao_id = None
+                for q in questoes_config:
+                    if q.get('numero') == questao_num:
+                        # Precisamos do ID real da questão
+                        resp_id = supabase.table('questoes') \
+                            .select('id') \
+                            .eq('id_avaliacao', id_avaliacao) \
+                            .eq('numero', questao_num) \
+                            .single() \
+                            .execute()
+                        if resp_id.data:
+                            questao_id = resp_id.data['id']
+                        break
+                
+                if questao_id:
+                    lista_respostas.append({
+                        'id_aluno': id_aluno,
+                        'id_avaliacao': id_avaliacao,
+                        'id_questao': questao_id,
+                        'resposta_aluno': str(resposta).strip().upper(),
+                        'correta': correta
+                    })
             
-            # Faz o upsert de todas as respostas de uma vez
-            supabase.table("respostas").upsert(
-                lista_respostas,
-                on_conflict="id_avaliacao,id_aluno,id_questao"
-            ).execute()
-            
-            print(f"✅ {len(lista_respostas)} respostas salvas com sucesso!")
-
+            if lista_respostas:
+                supabase.table('respostas') \
+                    .upsert(lista_respostas, on_conflict=['id_aluno', 'id_avaliacao', 'id_questao']) \
+                    .execute()
+                print(f"💾 {len(lista_respostas)} respostas salvas na tabela 'respostas'")
+        
         return jsonify({
-            'sucesso': True,
-            'mensagem': f'Nota {round(nota_final, 1)} e {len(detalhes_respostas)} respostas gravadas com sucesso!',
-            'nivel': nivel
-        }), 200
-
+            "sucesso": True,
+            "mensagem": f"Nota {nota_final} salva com sucesso!",
+            "nota": nota_final,
+            "nivel": nivel,
+            "tipo_calculo": "SAEB" if is_saeb else "Simples"
+        })
+    
     except Exception as e:
         print(f"❌ ERRO AO SALVAR: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'sucesso': False, 'erro': str(e)}), 500
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 @app.route('/api/avaliacoes/criar', methods=['POST'])
 def criar_avaliacao():
