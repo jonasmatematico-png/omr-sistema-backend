@@ -361,14 +361,12 @@ def salvar_correcao_omr():
         
         print(f"✅ Nota calculada: {nota_final} | Nível: {nivel}")
         
-        # 5. Salvar na tabela `resultados` (UPSERT para evitar duplicidade)
+        # 5. Salvar na tabela `resultados` (APENAS CAMPOS QUE EXISTEM!)
         dados_resultado = {
             'id_aluno': id_aluno,
             'id_avaliacao': id_avaliacao,
             'nota_final': nota_final,
-            'nivel_saeb': nivel,
-            'acertos': resultado.get('acertos_basico', 0),
-            'total_questoes': num_questoes
+            'nivel_saeb': nivel
         }
         
         supabase.table('resultados') \
@@ -389,7 +387,6 @@ def salvar_correcao_omr():
                 questao_id = None
                 for q in questoes_config:
                     if q.get('numero') == questao_num:
-                        # Precisamos do ID real da questão
                         resp_id = supabase.table('questoes') \
                             .select('id') \
                             .eq('id_avaliacao', id_avaliacao) \
