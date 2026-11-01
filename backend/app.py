@@ -304,10 +304,10 @@ def salvar_correcao_omr():
         id_aluno = int(dados.get('id_aluno'))
         id_avaliacao = int(dados.get('id_avaliacao'))
         detalhes_respostas = dados.get('detalhes_respostas', [])
-
-        print(f"📥 Recebido: aluno={id_aluno}, prova={id_avaliacao}, {len(detalhes_respostas)} respostas")
-
-        # 1. Buscar o TIPO da avaliação no Supabase
+        
+        print(f"📥 Recebido: aluno={id_aluno}, prova={id_avaliacao}")
+        
+        # 1. Buscar o TIPO da avaliação
         resp_avaliacao = supabase.table('avaliacoes') \
             .select('tipo, numero_questoes') \
             .eq('id', id_avaliacao) \
@@ -320,89 +320,78 @@ def salvar_correcao_omr():
         tipo_avaliacao = (resp_avaliacao.data.get('tipo') or '').upper()
         num_questoes = resp_avaliacao.data.get('numero_questoes', 10)
         
-        print(f"📋 Tipo da prova: {tipo_avaliacao}")
-        
-        # 2. Buscar as questões com seus níveis e valores
+        # 2. Buscar as questões
         resp_questoes = supabase.table('questoes') \
-            .select('id, numero, gabarito, nivel, valor') \
+            .select('numero, gabarito, nivel, valor') \
             .eq('id_avaliacao', id_avaliacao) \
             .order('numero') \
             .execute()
         
         questoes_config = resp_questoes.data if resp_questoes.data else []
-        print(f"📝 Questões encontradas: {len(questoes_config)}")
         
-        # 3. Extrair respostas do aluno em formato de lista simples
+        # 3. Extrair respostas do aluno
         respostas_aluno_lista = []
         for item in detalhes_respostas:
             questao_num = item.get('questao', item.get('numero', 0))
             resposta = item.get('resposta', item.get('resposta_aluno', ''))
             respostas_aluno_lista.append(str(resposta).strip().upper())
         
-        print(f"✏️ Respostas do aluno: {respostas_aluno_lista}")
-        
-        # 4. CALCULAR A NOTA (usando seu saeb.py)
-        # 4. CALCULAR A NOTA (usando saeb.py)
+        # 4. CALCULAR A NOTA
         is_saeb = 'SAEB' in tipo_avaliacao
-
+        
         if is_saeb:
-            print("🎯 Usando cálculo SAEB (com pesos)")
             from services.saeb import calcular_nota_saeb
             resultado = calcular_nota_saeb(questoes_config, respostas_aluno_lista)
         else:
-            print("📊 Usando cálculo simples (1 ponto por questão)")
             from services.saeb import calcular_nota_comum
             resultado = calcular_nota_comum(questoes_config, respostas_aluno_lista)
-            # Normaliza para escala 0-10
             acertos = resultado['acertos_basico']
-            resultado['nota'] = round((acertos / num_questoes) * 10, 2) if num_questoes > 0 else 0.0
-
-        nota_final = resultado['nota']
+            resultado['nota'] = (acertos / num_questoes) * 10 if num_questoes > 0 else 0.0
+        
+        # ✅ GARANTIR FORMATO CORRETO
+        nota_bruta = round(float(resultado['nota']), 2)  # 2 casas decimais: 7.00, 7.25, 6.67
+        nota_final = int(round(nota_bruta))              # Inteiro: 7, 7, 7
+        
         nivel = resultado.get('nivel', 'Básico')
-
-        print(f"✅ Nota calculada: {nota_final} | Nível: {nivel}")
-
-        # ==========================================================
-        # 5. Salvar na tabela `resultados` com formato correto
+        
+        print(f"✅ Nota bruta: {nota_bruta} | Nota final: {nota_final} | Nível: {nivel}")
+        
+        # 5. Salvar na tabela `resultados`
         dados_resultado = {
             'id_aluno': id_aluno,
             'id_avaliacao': id_avaliacao,
-            'nota_bruta': round(nota_final, 2),      # ✅ 2 casas decimais (ex: 7.00)
-            'nota_final': int(round(nota_final)),    # ✅ Sem casas decimais (ex: 7)
+            'nota_bruta': nota_bruta,      # ✅ 2 casas decimais
+            'nota_final': nota_final,      # ✅ Inteiro
             'nivel_saeb': nivel
         }
-
-        # Deleta registro existente (se houver) e insere novo
+        
+        # Deleta registro existente e insere novo
         supabase.table('resultados') \
             .delete() \
             .eq('id_aluno', id_aluno) \
             .eq('id_avaliacao', id_avaliacao) \
             .execute()
-
+        
         supabase.table('resultados') \
             .insert(dados_resultado) \
             .execute()
-
-        print(f"💾 Resultado salvo: nota_bruta={dados_resultado['nota_bruta']}, nota_final={dados_resultado['nota_final']}, nivel={nivel}")
         
-        # ==========================================================
-        # 6. SALVAR EM 'respostas' (MÉTODO SEGURO: DELETE + INSERT)
-        # ==========================================================
-        # Deleta as respostas antigas deste aluno nesta prova
-        supabase.table('respostas') \
-            .delete() \
-            .eq('id_aluno', id_aluno) \
-            .eq('id_avaliacao', id_avaliacao) \
-            .execute()
+        print(f"💾 Resultado salvo: nota_bruta={nota_bruta}, nota_final={nota_final}")
         
+        # 6. Salvar detalhes das respostas
         if detalhes_respostas:
+            supabase.table('respostas') \
+                .delete() \
+                .eq('id_aluno', id_aluno) \
+                .eq('id_avaliacao', id_avaliacao) \
+                .execute()
+            
             lista_respostas = []
             for item in detalhes_respostas:
                 questao_num = item.get('questao', item.get('numero', 0))
                 resposta = item.get('resposta', item.get('resposta_aluno', ''))
                 correta = item.get('correta', False)
                 
-                # Buscar o ID real da questão no banco para vincular corretamente
                 questao_id = None
                 for q in questoes_config:
                     if str(q.get('numero')) == str(questao_num):
@@ -429,14 +418,14 @@ def salvar_correcao_omr():
                 supabase.table('respostas') \
                     .insert(lista_respostas) \
                     .execute()
-                print(f"💾 {len(lista_respostas)} respostas salvas na tabela 'respostas'")
+                print(f"💾 {len(lista_respostas)} respostas salvas")
         
         return jsonify({
             "sucesso": True,
             "mensagem": f"Nota {nota_final} salva com sucesso!",
-            "nota": nota_final,
-            "nivel": nivel,
-            "tipo_calculo": "SAEB" if is_saeb else "Simples"
+            "nota_bruta": nota_bruta,
+            "nota_final": nota_final,
+            "nivel": nivel
         })
     
     except Exception as e:
