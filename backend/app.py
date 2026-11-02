@@ -3595,13 +3595,42 @@ CORS(app, resources={
 })
 
 # ========================================================================
-# 3. SUAS ROTAS E FUNÇÕES (O MEIO DO ARQUIVO)
+# 🤖 ROTA PARA GERAÇÃO DE IA (PLANO DE AULA, QUESTÕES, ETC.)
 # ========================================================================
-# @app.route('/api/ia_geral', methods=['POST'])
-# def gerar_ia():
-#     ... seu código ...
-
-# ... (todas as suas outras funções e rotas ficam aqui no meio) ...
+@app.route('/api/ia_geral', methods=['POST', 'OPTIONS'])
+def ia_geral():
+    # 1. Responder ao preflight do CORS imediatamente
+    if request.method == 'OPTIONS':
+        return '', 204
+        
+    try:
+        data = request.json
+        prompt = data.get('prompt', '')
+        
+        if not prompt:
+            return jsonify({'sucesso': False, 'erro': 'Prompt não fornecido'}), 400
+            
+        # 2. Chamar a IA (Gemini)
+        # Aqui usamos a lógica que você já tem para chamar o Gemini
+        import google.generativeai as genai
+        
+        # Escolhe uma chave aleatória se tiver múltiplas, ou usa a primeira
+        chave_api = GEMINI_CHAVES[0] if isinstance(GEMINI_CHAVES, list) else GEMINI_CHAVES
+        genai.configure(api_key=chave_api)
+        
+        modelo = genai.GenerativeModel(GEMINI_MODELOS[0] if isinstance(GEMINI_MODELOS, list) else GEMINI_MODELOS)
+        
+        # Gera a resposta
+        resposta = modelo.generate_content(prompt)
+        
+        return jsonify({
+            'sucesso': True, 
+            'texto': resposta.text
+        })
+        
+    except Exception as e:
+        print(f"❌ Erro na IA: {str(e)}")
+        return jsonify({'sucesso': False, 'erro': str(e)}), 500
 
 
 # ========================================================================
