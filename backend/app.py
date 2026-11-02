@@ -3567,9 +3567,46 @@ def dados_aluno(id_aluno):
             "erro": f"Erro ao buscar dados do aluno: {str(e)}"
         }), 500
 
-# ==========================================================
-# 🚀 INICIALIZAÇÃO DO SERVIDOR (ÚNICO E CORRIGIDO)
-# ==========================================================
+# ========================================================================
+# 1. IMPORTS (NO TOPO DO ARQUIVO)
+# ========================================================================
+from flask import Flask, request, jsonify
+from flask_cors import CORS  # <--- TEM QUE ESTAR AQUI NO TOPO
+import os
+# ... (outros imports que você já tem, como supabase, google.generativeai, etc.)
+
+# ========================================================================
+# 2. INICIALIZAÇÃO DO APP E CORS (LOGO APÓS OS IMPORTS)
+# ========================================================================
+app = Flask(__name__)
+
+# 🛡️ CONFIGURAÇÃO DE CORS (DEVE VIR IMEDIATAMENTE APÓS app = Flask)
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [
+            "https://jonasmatematico.com.br",
+            "http://localhost:8000",
+            "http://127.0.0.1:5500",
+            "http://localhost:5500"
+        ],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
+
+# ========================================================================
+# 3. SUAS ROTAS E FUNÇÕES (O MEIO DO ARQUIVO)
+# ========================================================================
+# @app.route('/api/ia_geral', methods=['POST'])
+# def gerar_ia():
+#     ... seu código ...
+
+# ... (todas as suas outras funções e rotas ficam aqui no meio) ...
+
+
+# ========================================================================
+# 4. INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO!)
+# ========================================================================
 if __name__ == '__main__':
     print("🚨🚨 OMR SISTEMA 2.0 - BACKEND COMPLETO 🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
@@ -3581,5 +3618,5 @@ if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
     print(f"📡 Servidor rodando na porta: {port}")
     
-    # debug=True no PC ajuda a ver erros na hora. O Render ignora isso e usa produção.
+    # debug=True no PC ajuda a ver erros. O Render ignora isso e usa produção.
     app.run(host='0.0.0.0', port=port, debug=True)
