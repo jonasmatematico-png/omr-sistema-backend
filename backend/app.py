@@ -3599,7 +3599,7 @@ CORS(app, resources={
 # ========================================================================
 @app.route('/api/ia_geral', methods=['POST', 'OPTIONS'])
 def ia_geral():
-    # 1. Responder ao preflight do CORS imediatamente
+    # 1. Responder ao preflight do CORS
     if request.method == 'OPTIONS':
         return '', 204
         
@@ -3610,27 +3610,58 @@ def ia_geral():
         if not prompt:
             return jsonify({'sucesso': False, 'erro': 'Prompt não fornecido'}), 400
             
-        # 2. Chamar a IA (Gemini)
-        # Aqui usamos a lógica que você já tem para chamar o Gemini
+        print(f"🤖 [IA_GERAL] Recebido prompt com {len(prompt)} caracteres")
+        
+        # 2. Verificar se as variáveis de ambiente existem
+        import os
+        gemini_key = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
+        
+        if not gemini_key:
+            # Tenta pegar da variável global GEMINI_CHAVES (se você já tinha)
+            try:
+                if 'GEMINI_CHAVES' in globals() and GEMINI_CHAVES:
+                    gemini_key = GEMINI_CHAVES[0] if isinstance(GEMINI_CHAVES, list) else GEMINI_CHAVES
+                else:
+                    raise ValueError("Nenhuma chave do Gemini encontrada!")
+            except Exception as e:
+                print(f"❌ Erro ao buscar chave: {e}")
+                return jsonify({'sucesso': False, 'erro': f'Chave do Gemini não configurada: {str(e)}'}), 500
+        
+        print(f"🔑 [IA_GERAL] Chave encontrada: {gemini_key[:10]}...")
+        
+        # 3. Inicializar o Gemini
         import google.generativeai as genai
+        genai.configure(api_key=gemini_key)
         
-        # Escolhe uma chave aleatória se tiver múltiplas, ou usa a primeira
-        chave_api = GEMINI_CHAVES[0] if isinstance(GEMINI_CHAVES, list) else GEMINI_CHAVES
-        genai.configure(api_key=chave_api)
+        # 4. Escolher o modelo
+        modelo_nome = 'gemini-1.5-flash'  # Modelo mais rápido e barato
+        if 'GEMINI_MODELOS' in globals() and GEMINI_MODELOS:
+            modelo_nome = GEMINI_MODELOS[0] if isinstance(GEMINI_MODELOS, list) else GEMINI_MODELOS
+            
+        print(f"🤖 [IA_GERAL] Usando modelo: {modelo_nome}")
         
-        modelo = genai.GenerativeModel(GEMINI_MODELOS[0] if isinstance(GEMINI_MODELOS, list) else GEMINI_MODELOS)
+        modelo = genai.GenerativeModel(modelo_nome)
         
-        # Gera a resposta
+        # 5. Gerar a resposta
+        print(f"🚀 [IA_GERAL] Chamando Gemini...")
         resposta = modelo.generate_content(prompt)
+        texto_final = resposta.text
+        
+        print(f"✅ [IA_GERAL] Sucesso! Resposta com {len(texto_final)} caracteres")
         
         return jsonify({
             'sucesso': True, 
-            'texto': resposta.text
+            'texto': texto_final
         })
         
     except Exception as e:
-        print(f"❌ Erro na IA: {str(e)}")
-        return jsonify({'sucesso': False, 'erro': str(e)}), 500
+        import traceback
+        erro_detalhado = traceback.format_exc()
+        print(f"❌ [IA_GERAL] ERRO DETALHADO:\n{erro_detalhado}")
+        return jsonify({
+            'sucesso': False, 
+            'erro': f'Erro interno: {str(e)}'
+        }), 500
 
 
 # ========================================================================
