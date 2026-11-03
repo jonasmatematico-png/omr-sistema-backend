@@ -3603,34 +3603,8 @@ def ia_geral():
             base_url="https://api.groq.com/openai/v1"
         )
         
-        modelo = 'mixtral-8x7b-32768'  # Modelo curinga: estável, gratuito e raramente desativado
-        print(f"🚀 [IA_GERAL] Chamando Groq com modefrom openai import OpenAI
-
-# 🔑 COLE AQUI A SUA CHAVE DA GROQ (a mesma que está no Render)
-GROQ_API_KEY = "gsk_0hJM1m..." # <--- SUBSTITUA PELA SUA CHAVE COMPLETA
-
-client = OpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1"
-)
-
-print("🔍 Buscando modelos disponíveis na sua conta Groq...\n")
-
-try:
-    models = client.models.list()
-    print(f"✅ SUCESSO! Encontrados {len(models.data)} modelos:\n")
-    
-    # Filtra apenas os modelos de chat (que servem para o seu sistema)
-    modelos_chat = [m.id for m in models.data if not m.id.startswith('whisper') and not m.id.startswith('llama-guard')]
-    
-    for i, modelo in enumerate(modelos_chat, 1):
-        print(f"{i}. {modelo}")
-        
-    print("\n💡 RECOMENDAÇÃO: Use o primeiro ou segundo modelo da lista acima no seu app.py!")
-    
-except Exception as e:
-    print(f"❌ ERRO: {e}")
-    print("Verifique se a chave está correta e sem espaços.")o {modelo}...")
+        modelo = 'qwen/qwen3.8-27b'  # Modelo disponível na sua conta, excelente em português!
+        print(f"🚀 [IA_GERAL] Chamando Groq com modelo {modelo}...")
         
         chat_completion = client.chat.completions.create(
             messages=[
