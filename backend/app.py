@@ -1837,11 +1837,11 @@ def buscar_matriz():
         # 2. Iniciar a consulta na tabela matriz_curricular
         query = supabase.table("matriz_curricular").select("codigo, habilidade, tema, objetos_de_conhecimento, componente, ano")
         
-        # 3. 🚨 MAPEAMENTO PEDAGÓGICO CORRETO (SEM CONFUSÃO!)
-        if fonte_param == 'CP' or fonte_param == 'Currículo Paulista':
+        # 3. 🚨 MAPEAMENTO INTELIGENTE (O SEGREDO PARA FUNCIONAR!)
+        if fonte_param == 'CP':
             db_fonte = 'Currículo Paulista'
-        elif fonte_param == 'SAEB' or fonte_param == 'Descritores SAEB':
-            db_fonte = 'SAEB'  # Busca exatamente o que está no seu banco
+        elif fonte_param == 'BNCC' or fonte_param == 'SAEB':
+            db_fonte = 'SAEB'  # O site pede BNCC ou SAEB, o banco tem SAEB
         else:
             db_fonte = fonte_param
             
