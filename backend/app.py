@@ -3603,7 +3603,7 @@ def ia_geral():
             base_url="https://api.groq.com/openai/v1"
         )
         
-        modelo = 'llama-3.1-8b-instant'  # Modelo atual, gratuito e ultra-rápido da Groq
+        modelo = 'mixtral-8x7b-32768'  # Modelo curinga: estável, gratuito e raramente desativado
         print(f"🚀 [IA_GERAL] Chamando Groq com modelo {modelo}...")
         
         chat_completion = client.chat.completions.create(
