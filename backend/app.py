@@ -1830,7 +1830,7 @@ def _extrair_json_array(texto):
 def buscar_matriz():
     try:
         # 1. Pegar os parâmetros que o site enviou
-        fonte_param = request.args.get('fonte', 'CP')
+        fonte_param = request.args.get('fonte', 'Currículo Paulista')
         ano_param = request.args.get('ano')
         disciplina_param = request.args.get('disciplina')
         
@@ -1838,7 +1838,7 @@ def buscar_matriz():
         query = supabase.table("matriz_curricular").select("codigo, habilidade, tema, objetos_de_conhecimento, componente, ano")
         
         # 3. 🚨 MAPEAMENTO INTELIGENTE (O SEGREDO PARA FUNCIONAR!)
-        if fonte_param == 'CP':
+        if fonte_param == 'Currículo Paulista':
             db_fonte = 'Currículo Paulista'
         elif fonte_param == 'BNCC' or fonte_param == 'SAEB':
             db_fonte = 'SAEB'  # O site pede BNCC ou SAEB, o banco tem SAEB
@@ -1876,8 +1876,8 @@ def gerar_questoes():
     try:
         dados = request.get_json() or {}
         codigos = dados.get('codigos') or []
-        fonte = dados.get('fonte', 'CP')
-        fonte_db = 'Currículo Paulista' if fonte == 'CP' else fonte
+        fonte = dados.get('fonte', 'Currículo Paulista')
+        fonte_db = 'Currículo Paulista' if fonte == 'Currículo Paulista' else fonte
         componente = dados.get('componente', 'Matemática')
         ano = dados.get('ano', 6)
         quantidade = max(1, min(5, int(dados.get('quantidade', 1))))
@@ -1968,7 +1968,7 @@ def identificar_habilidade():
         from flask import request
         data = request.json
         texto = data.get("texto", "")
-        fonte = data.get("fonte", "CP")
+        fonte = data.get("fonte", "Currículo Paulista")
         componente = data.get("componente", "Matemática")
         ano = data.get("ano", 6)
         
