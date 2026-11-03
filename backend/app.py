@@ -3567,7 +3567,7 @@ def dados_aluno(id_aluno):
         }), 500
 
 # ========================================================================
-# 🤖 ROTA NOVA: GERAÇÃO DE IA COM GROQ (LLAMA 3)
+# 🤖 ROTA NOVA: GERAÇÃO DE IA COM GROQ (MODELO ATUALIZADO: LLAMA 3.3)
 # ========================================================================
 @app.route('/api/ia_geral', methods=['POST', 'OPTIONS'])
 def ia_geral():
@@ -3595,13 +3595,15 @@ def ia_geral():
         
         print(f"🔑 [IA_GERAL] Chave Groq encontrada: {groq_key[:10]}...")
         
-        # 3. Chama a Groq (Modelo Llama 3 - Rápido e Gratuito)
+        # 3. Chama a Groq
+        from openai import OpenAI
         client = OpenAI(
             api_key=groq_key,
             base_url="https://api.groq.com/openai/v1"
         )
         
-        modelo = 'llama-3.1-70b-versatile'
+        # 🚨 AQUI ESTÁ A CORREÇÃO: Modelo novo e 100% suportado pela Groq!
+        modelo = 'llama-3.3-70b-versatile'
         print(f"🚀 [IA_GERAL] Chamando Groq com modelo {modelo}...")
         
         chat_completion = client.chat.completions.create(
