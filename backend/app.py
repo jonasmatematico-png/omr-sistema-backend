@@ -3566,46 +3566,22 @@ def dados_aluno(id_aluno):
             "erro": f"Erro ao buscar dados do aluno: {str(e)}"
         }), 500
 
-# ========================================================================
-# 🤖 ROTA NOVA: GERAÇÃO DE IA COM GROQ (MODELO ATUALIZADO: LLAMA 3.3)
-# ========================================================================
-@app.route('/api/ia_geral', methods=['POST', 'OPTIONS'])
-def ia_geral():
-    # 1. Responder ao preflight do CORS
-    if request.method == 'OPTIONS':
-        return '', 204
-        
-    try:
-        data = request.json
-        prompt = data.get('prompt', '')
-        
-        if not prompt:
-            return jsonify({'sucesso': False, 'erro': 'Prompt não fornecido'}), 400
-            
-        print(f"🤖 [IA_GERAL] Recebido prompt com {len(prompt)} caracteres")
-        
-        # 2. Pega a chave da Groq do Render
-        groq_key = os.environ.get('GROQ_API_KEY')
-        if not groq_key:
-            print("❌ [IA_GERAL] Chave GROQ_API_KEY não configurada no Render!")
-            return jsonify({
-                'sucesso': False, 
-                'erro': 'Chave da IA não configurada no servidor. Contate o administrador.'
-            }), 500
-        
-        print(f"🔑 [IA_GERAL] Chave Groq encontrada: {groq_key[:10]}...")
-        
-        # 3. Chama a Groq
+        # ====================================================================
+        # 🚀 CHAMA A GROQ (MODELO LLAMA 3 70B - O MAIS ESTÁVEL E GRATUITO)
+        # ====================================================================
         from openai import OpenAI
+        
+        # Inicializa o cliente Groq (usa API compatível com OpenAI)
         client = OpenAI(
             api_key=groq_key,
             base_url="https://api.groq.com/openai/v1"
         )
         
-        # 🚨 AQUI ESTÁ A CORREÇÃO: Modelo novo e 100% suportado pela Groq!
-        modelo = 'llama-3.3-70b-versatile'
+        # 🚨 AQUI ESTÁ A CORREÇÃO: Modelo 100% disponível e gratuito na Groq!
+        modelo = 'llama3-70b-8192'
         print(f"🚀 [IA_GERAL] Chamando Groq com modelo {modelo}...")
         
+        # Faz a requisição
         chat_completion = client.chat.completions.create(
             messages=[
                 {
@@ -3621,37 +3597,6 @@ def ia_geral():
             temperature=0.7,
             max_tokens=4000,
         )
-        
-        texto_final = chat_completion.choices[0].message.content
-        print(f"✅ [IA_GERAL] Sucesso! Resposta com {len(texto_final)} caracteres")
-        
-        return jsonify({
-            'sucesso': True, 
-            'texto': texto_final
-        })
-        
-    except Exception as e:
-        import traceback
-        erro_detalhado = traceback.format_exc()
-        print(f"❌ [IA_GERAL] ERRO DETALHADO:\n{erro_detalhado}")
-        
-        erro_str = str(e).lower()
-        if 'rate_limit' in erro_str or '429' in erro_str:
-            return jsonify({
-                'sucesso': False, 
-                'erro': '⏰ Limite de requisições atingido. Aguarde alguns segundos e tente novamente.'
-            }), 429
-        
-        if 'api_key' in erro_str or 'authentication' in erro_str or '401' in erro_str:
-            return jsonify({
-                'sucesso': False, 
-                'erro': '🔑 Chave da API inválida. Contate o administrador.'
-            }), 401
-        
-        return jsonify({
-            'sucesso': False, 
-            'erro': f'Erro interno: {str(e)[:200]}'
-        }), 500
 
 # ==========================================================
 # 🚀 INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO!)
