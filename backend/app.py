@@ -1826,7 +1826,6 @@ def _extrair_json_array(texto):
     except Exception:
         return []
 
-
 @app.route('/api/matriz', methods=['GET'])
 def buscar_matriz():
     try:
@@ -1836,46 +1835,40 @@ def buscar_matriz():
         disciplina_param = request.args.get('disciplina')
         
         # 2. Iniciar a consulta na tabela matriz_curricular
-        # Adicionei 'componente' e 'ano' no select, pois o frontend às vezes precisa deles
         query = supabase.table("matriz_curricular").select("codigo, habilidade, tema, objetos_de_conhecimento, componente, ano")
         
-        # 3. 🚨 CORREÇÃO: Mapeamento Inteligente baseado no que está no seu Supabase
-        if fonte_param == 'CP':
+        # 3. 🚨 MAPEAMENTO PEDAGÓGICO CORRETO (SEM CONFUSÃO!)
+        if fonte_param == 'CP' or fonte_param == 'Currículo Paulista':
             db_fonte = 'Currículo Paulista'
-        elif fonte_param == 'BNCC':
-            db_fonte = 'SAEB'  # <-- AQUI ESTÁ O SEGREDO! O site pede BNCC, mas o banco tem SAEB
+        elif fonte_param == 'SAEB' or fonte_param == 'Descritores SAEB':
+            db_fonte = 'SAEB'  # Busca exatamente o que está no seu banco
         else:
-            db_fonte = fonte_param  # Ex: se o site enviar 'SAEB', ele busca 'SAEB'
+            db_fonte = fonte_param
             
         # Aplica o filtro de fonte
         query = query.eq('fonte', db_fonte)
         
-        # 4. Filtrar pelo ano (garantindo que seja texto)
+        # 4. Filtrar pelo ano e disciplina
         if ano_param:
             query = query.eq('ano', str(ano_param))
-            
-        # 5. Filtrar pela matéria (componente)
         if disciplina_param:
             query = query.eq('componente', disciplina_param)
             
-        # 6. Executar a consulta
+        # 5. Executar a consulta
         response = query.execute()
         
-        # 7. Retornar os dados para o site
+        # 6. Retornar os dados
         if response.data and len(response.data) > 0:
             return jsonify({"sucesso": True, "itens": response.data})
         else:
-            # Mensagem de erro detalhada para ajudar no debug, se ainda falhar
             return jsonify({
                 "sucesso": False, 
                 "erro": f"Nenhuma habilidade encontrada. (O sistema buscou por: Fonte='{db_fonte}', Ano='{ano_param}', Disciplina='{disciplina_param}')"
             }), 404
             
     except Exception as e:
-        # Se der erro, ele avisa exatamente qual foi o problema no console do Render
         print(f"❌ ERRO NO BACKEND (buscar_matriz): {e}")
         return jsonify({"sucesso": False, "erro": str(e)}), 500
-
 
 @app.route('/api/gerar_questoes', methods=['POST'])
 def gerar_questoes():
