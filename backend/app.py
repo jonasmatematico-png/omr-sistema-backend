@@ -3595,7 +3595,7 @@ CORS(app, resources={
 })
 
 # ========================================================================
-# 🤖 ROTA PARA GERAÇÃO DE IA (PLANO DE AULA, QUESTÕES, ETC.)
+# 🤖 ROTA PARA GERAÇÃO DE IA (USANDO GROQ - LLAMA 3)
 # ========================================================================
 @app.route('/api/ia_geral', methods=['POST', 'OPTIONS'])
 def ia_geral():
@@ -3612,40 +3612,55 @@ def ia_geral():
             
         print(f"🤖 [IA_GERAL] Recebido prompt com {len(prompt)} caracteres")
         
-        # 2. Verificar se as variáveis de ambiente existem
+        # ====================================================================
+        # 🔑 PEGA A CHAVE DA GROQ DO RENDER
+        # ====================================================================
         import os
-        gemini_key = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
+        groq_key = os.environ.get('GROQ_API_KEY')
         
-        if not gemini_key:
-            # Tenta pegar da variável global GEMINI_CHAVES (se você já tinha)
-            try:
-                if 'GEMINI_CHAVES' in globals() and GEMINI_CHAVES:
-                    gemini_key = GEMINI_CHAVES[0] if isinstance(GEMINI_CHAVES, list) else GEMINI_CHAVES
-                else:
-                    raise ValueError("Nenhuma chave do Gemini encontrada!")
-            except Exception as e:
-                print(f"❌ Erro ao buscar chave: {e}")
-                return jsonify({'sucesso': False, 'erro': f'Chave do Gemini não configurada: {str(e)}'}), 500
+        if not groq_key:
+            print("❌ [IA_GERAL] Chave GROQ_API_KEY não configurada no Render!")
+            return jsonify({
+                'sucesso': False, 
+                'erro': 'Chave da IA não configurada no servidor. Contate o administrador.'
+            }), 500
         
-        print(f"🔑 [IA_GERAL] Chave encontrada: {gemini_key[:10]}...")
+        print(f"🔑 [IA_GERAL] Chave Groq encontrada: {groq_key[:10]}...")
         
-        # 3. Inicializar o Gemini
-        import google.generativeai as genai
-        genai.configure(api_key=gemini_key)
+        # ====================================================================
+        # 🚀 CHAMA A GROQ (MODELO LLAMA 3 - RÁPIDO E GRATUITO)
+        # ====================================================================
+        from openai import OpenAI
         
-        # 4. Escolher o modelo
-        modelo_nome = 'gemini-1.5-flash'  # Modelo mais rápido e barato
-        if 'GEMINI_MODELOS' in globals() and GEMINI_MODELOS:
-            modelo_nome = GEMINI_MODELOS[0] if isinstance(GEMINI_MODELOS, list) else GEMINI_MODELOS
-            
-        print(f"🤖 [IA_GERAL] Usando modelo: {modelo_nome}")
+        # Inicializa o cliente Groq (usa API compatível com OpenAI)
+        client = OpenAI(
+            api_key=groq_key,
+            base_url="https://api.groq.com/openai/v1"
+        )
         
-        modelo = genai.GenerativeModel(modelo_nome)
+        # Escolhe o modelo (Llama 3.1 70B - excelente para educação)
+        modelo = 'llama-3.1-70b-versatile'
         
-        # 5. Gerar a resposta
-        print(f"🚀 [IA_GERAL] Chamando Gemini...")
-        resposta = modelo.generate_content(prompt)
-        texto_final = resposta.text
+        print(f"🚀 [IA_GERAL] Chamando Groq com modelo {modelo}...")
+        
+        # Faz a requisição
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Você é um professor especialista em educação brasileira, com profundo conhecimento da BNCC, Currículo Paulista e descritores SAEB. Responda sempre em português do Brasil, com linguagem clara e didática."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            model=modelo,
+            temperature=0.7,
+            max_tokens=4000,
+        )
+        
+        texto_final = chat_completion.choices[0].message.content
         
         print(f"✅ [IA_GERAL] Sucesso! Resposta com {len(texto_final)} caracteres")
         
@@ -3658,11 +3673,26 @@ def ia_geral():
         import traceback
         erro_detalhado = traceback.format_exc()
         print(f"❌ [IA_GERAL] ERRO DETALHADO:\n{erro_detalhado}")
+        
+        # Tratamento inteligente de erros
+        erro_str = str(e).lower()
+        
+        if 'rate_limit' in erro_str or '429' in erro_str:
+            return jsonify({
+                'sucesso': False, 
+                'erro': '⏰ Limite de requisições atingido. Aguarde alguns segundos e tente novamente.'
+            }), 429
+        
+        if 'api_key' in erro_str or 'authentication' in erro_str or '401' in erro_str:
+            return jsonify({
+                'sucesso': False, 
+                'erro': '🔑 Chave da API inválida. Contate o administrador.'
+            }), 401
+        
         return jsonify({
             'sucesso': False, 
-            'erro': f'Erro interno: {str(e)}'
+            'erro': f'Erro interno: {str(e)[:200]}'
         }), 500
-
 
 # ========================================================================
 # 4. INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO!)
