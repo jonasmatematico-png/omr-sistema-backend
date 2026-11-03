@@ -1830,40 +1830,44 @@ def _extrair_json_array(texto):
 def buscar_matriz():
     try:
         # 1. Pegar os parâmetros que o site enviou
-        fonte_param = request.args.get('fonte', 'Currículo Paulista')
+        fonte_param = request.args.get('fonte', 'CP')
         ano_param = request.args.get('ano')
         disciplina_param = request.args.get('disciplina')
         
         # 2. Iniciar a consulta na tabela matriz_curricular
         query = supabase.table("matriz_curricular").select("codigo, habilidade, tema, objetos_de_conhecimento, componente, ano")
         
-        # 3. 🚨 MAPEAMENTO INTELIGENTE (O SEGREDO PARA FUNCIONAR!)
-        if fonte_param == 'Currículo Paulista':
-            db_fonte = 'Currículo Paulista'
-        elif fonte_param == 'BNCC' or fonte_param == 'SAEB':
-            db_fonte = 'SAEB'  # O site pede BNCC ou SAEB, o banco tem SAEB
-        else:
-            db_fonte = fonte_param
+        # 3. 🚨 MAPEAMENTO À PROVA DE ERROS (Fuzzy Matching)
+        # Se o frontend mandar 'CP' ou 'Currículo Paulista', buscamos por qualquer variação no banco
+        if fonte_param in ['CP', 'Currículo Paulista', 'Curriculo Paulista']:
+            # O .in_() busca por QUALQUER UM desses valores na coluna 'fonte'
+            query = query.in_('fonte', ['CP', 'Currículo Paulista', 'Curriculo Paulista', 'CP - Currículo Paulista'])
             
-        # Aplica o filtro de fonte
-        query = query.eq('fonte', db_fonte)
-        
-        # 4. Filtrar pelo ano e disciplina
+        elif fonte_param in ['BNCC', 'SAEB', 'Descritores SAEB']:
+            query = query.in_('fonte', ['SAEB', 'BNCC', 'Descritores SAEB'])
+            
+        else:
+            query = query.eq('fonte', fonte_param)
+            
+        # 4. Filtrar pelo ano (garantindo que seja texto)
         if ano_param:
             query = query.eq('ano', str(ano_param))
+            
+        # 5. Filtrar pela matéria (componente)
         if disciplina_param:
             query = query.eq('componente', disciplina_param)
             
-        # 5. Executar a consulta
+        # 6. Executar a consulta
         response = query.execute()
         
-        # 6. Retornar os dados
+        # 7. Retornar os dados
         if response.data and len(response.data) > 0:
             return jsonify({"sucesso": True, "itens": response.data})
         else:
+            # Mensagem de erro detalhada para o console do navegador
             return jsonify({
                 "sucesso": False, 
-                "erro": f"Nenhuma habilidade encontrada. (O sistema buscou por: Fonte='{db_fonte}', Ano='{ano_param}', Disciplina='{disciplina_param}')"
+                "erro": f"Nenhum dado encontrado. Filtros usados: Fonte='{fonte_param}', Ano='{ano_param}', Disciplina='{disciplina_param}'"
             }), 404
             
     except Exception as e:
