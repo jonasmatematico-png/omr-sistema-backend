@@ -2,8 +2,6 @@
 # OMR Sistema 2.0 - Backend Completo (Supabase + Câmera OMR + Gemini + Relatórios PDF)
 import os
 from dotenv import load_dotenv
-
-# Força o carregamento do arquivo com o nome exato que criamos
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), 'variaveis.env'))
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
@@ -12,6 +10,7 @@ import os
 import io
 import qrcode
 import requests as rq_http
+from openai import OpenAI
 import json as jsonlib
 from datetime import datetime
 import base64
@@ -3568,34 +3567,7 @@ def dados_aluno(id_aluno):
         }), 500
 
 # ========================================================================
-# 1. IMPORTS (NO TOPO DO ARQUIVO)
-# ========================================================================
-from flask import Flask, request, jsonify
-from flask_cors import CORS  # <--- TEM QUE ESTAR AQUI NO TOPO
-import os
-# ... (outros imports que você já tem, como supabase, google.generativeai, etc.)
-
-# ========================================================================
-# 2. INICIALIZAÇÃO DO APP E CORS (LOGO APÓS OS IMPORTS)
-# ========================================================================
-app = Flask(__name__)
-
-# 🛡️ CONFIGURAÇÃO DE CORS (DEVE VIR IMEDIATAMENTE APÓS app = Flask)
-CORS(app, resources={
-    r"/api/*": {
-        "origins": [
-            "https://jonasmatematico.com.br",
-            "http://localhost:8000",
-            "http://127.0.0.1:5500",
-            "http://localhost:5500"
-        ],
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
-    }
-})
-
-# ========================================================================
-# 🤖 ROTA PARA GERAÇÃO DE IA (USANDO GROQ - LLAMA 3)
+# 🤖 ROTA NOVA: GERAÇÃO DE IA COM GROQ (LLAMA 3)
 # ========================================================================
 @app.route('/api/ia_geral', methods=['POST', 'OPTIONS'])
 def ia_geral():
@@ -3612,12 +3584,8 @@ def ia_geral():
             
         print(f"🤖 [IA_GERAL] Recebido prompt com {len(prompt)} caracteres")
         
-        # ====================================================================
-        # 🔑 PEGA A CHAVE DA GROQ DO RENDER
-        # ====================================================================
-        import os
+        # 2. Pega a chave da Groq do Render
         groq_key = os.environ.get('GROQ_API_KEY')
-        
         if not groq_key:
             print("❌ [IA_GERAL] Chave GROQ_API_KEY não configurada no Render!")
             return jsonify({
@@ -3627,23 +3595,15 @@ def ia_geral():
         
         print(f"🔑 [IA_GERAL] Chave Groq encontrada: {groq_key[:10]}...")
         
-        # ====================================================================
-        # 🚀 CHAMA A GROQ (MODELO LLAMA 3 - RÁPIDO E GRATUITO)
-        # ====================================================================
-        from openai import OpenAI
-        
-        # Inicializa o cliente Groq (usa API compatível com OpenAI)
+        # 3. Chama a Groq (Modelo Llama 3 - Rápido e Gratuito)
         client = OpenAI(
             api_key=groq_key,
             base_url="https://api.groq.com/openai/v1"
         )
         
-        # Escolhe o modelo (Llama 3.1 70B - excelente para educação)
         modelo = 'llama-3.1-70b-versatile'
-        
         print(f"🚀 [IA_GERAL] Chamando Groq com modelo {modelo}...")
         
-        # Faz a requisição
         chat_completion = client.chat.completions.create(
             messages=[
                 {
@@ -3661,7 +3621,6 @@ def ia_geral():
         )
         
         texto_final = chat_completion.choices[0].message.content
-        
         print(f"✅ [IA_GERAL] Sucesso! Resposta com {len(texto_final)} caracteres")
         
         return jsonify({
@@ -3674,9 +3633,7 @@ def ia_geral():
         erro_detalhado = traceback.format_exc()
         print(f"❌ [IA_GERAL] ERRO DETALHADO:\n{erro_detalhado}")
         
-        # Tratamento inteligente de erros
         erro_str = str(e).lower()
-        
         if 'rate_limit' in erro_str or '429' in erro_str:
             return jsonify({
                 'sucesso': False, 
@@ -3694,19 +3651,18 @@ def ia_geral():
             'erro': f'Erro interno: {str(e)[:200]}'
         }), 500
 
-# ========================================================================
-# 4. INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO!)
-# ========================================================================
+# ==========================================================
+# 🚀 INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO!)
+# ==========================================================
 if __name__ == '__main__':
     print("🚨🚨 OMR SISTEMA 2.0 - BACKEND COMPLETO 🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
     print(f"🔑 Gemini chaves: {len(GEMINI_CHAVES)} configurada(s)")
-    print(f"🤖 Gemini modelos: {GEMINI_MODELOS}")
+    print(f"🤖 Modelos Gemini: {GEMINI_MODELOS}")
     print(f"📄 Relatórios PDF: {'✅ ATIVOS' if PDF_OK else '❌ INATIVOS'}")
     
-    # Detecta a porta do Render ou usa 10000 localmente
     port = int(os.environ.get("PORT", 10000))
     print(f"📡 Servidor rodando na porta: {port}")
     
-    # debug=True no PC ajuda a ver erros. O Render ignora isso e usa produção.
-    app.run(host='0.0.0.0', port=port, debug=True)
+    # debug=False é mais seguro para produção no Render
+    app.run(host='0.0.0.0', port=port, debug=False)
