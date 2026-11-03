@@ -10,5 +10,7 @@ ENV/
 credentials.json
 *.json
 variaveis.env
-.env
 *.env
+testar_chaves*.py
+  chaves.txt
+  secret*

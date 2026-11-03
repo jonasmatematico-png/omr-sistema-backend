@@ -14,3 +14,4 @@ pyzbar>=0.1.9
 imutils>=0.5.4
 requests>=2.31.0
 google-generativeai
+openai
