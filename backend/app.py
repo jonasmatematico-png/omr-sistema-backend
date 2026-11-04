@@ -3661,11 +3661,10 @@ def ia_geral():
         }), 500
 
         # ========================================================================
-# 📊 NOVA: EXPORTAR PLANILHA COM RESULTADOS DA TURMA
+# 📊 ROTA: EXPORTAR PLANILHA COM RESULTADOS DA TURMA (CSV)
 # ========================================================================
 @app.route('/api/exportar_planilha', methods=['GET'])
 def exportar_planilha():
-    """Exporta os resultados de uma avaliação em formato CSV (abre no Excel)."""
     try:
         id_turma = request.args.get('id_turma')
         id_avaliacao = request.args.get('id_avaliacao')
@@ -3673,69 +3672,43 @@ def exportar_planilha():
         if not id_turma or not id_avaliacao:
             return jsonify({"sucesso": False, "erro": "Informe turma e avaliação"}), 400
         
-        # 1. Buscar alunos da turma
-        alunos_resp = supabase.table("alunos") \
-            .select("id, nome_completo, numero_chamada") \
-            .eq("id_turma", int(id_turma)) \
-            .order("numero_chamada") \
-            .execute()
+        import csv
+        import io
+        from datetime import datetime
+        
+        alunos_resp = supabase.table("alunos").select("id, nome_completo, numero_chamada").eq("id_turma", int(id_turma)).order("numero_chamada").execute()
         alunos = alunos_resp.data or []
         
-        # 2. Buscar resultados da avaliação
-        resultados_resp = supabase.table("resultados") \
-            .select("id_aluno, nota_bruta, nota_final, nivel_saeb") \
-            .eq("id_avaliacao", int(id_avaliacao)) \
-            .execute()
+        resultados_resp = supabase.table("resultados").select("id_aluno, nota_bruta, nota_final, nivel_saeb").eq("id_avaliacao", int(id_avaliacao)).execute()
         resultados = {r['id_aluno']: r for r in (resultados_resp.data or [])}
         
-        # 3. Buscar nomes da turma e avaliação
         turma_resp = supabase.table("turmas").select("nome").eq("id", int(id_turma)).maybe_single().execute()
         av_resp = supabase.table("avaliacoes").select("nome").eq("id", int(id_avaliacao)).maybe_single().execute()
         
         nome_turma = turma_resp.data.get('nome', 'Turma') if turma_resp.data else 'Turma'
         nome_avaliacao = av_resp.data.get('nome', 'Avaliação') if av_resp.data else 'Avaliação'
         
-        # 4. Montar o CSV
-        import csv
-        import io
-        
         output = io.StringIO()
         writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_NONNUMERIC)
         
-        # Cabeçalho com informações
         writer.writerow([f"Turma: {nome_turma}"])
         writer.writerow([f"Avaliação: {nome_avaliacao}"])
-        writer.writerow([f"Data de exportação: {datetime.now().strftime('%d/%m/%Y %H:%M')}"])
+        writer.writerow([f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}"])
         writer.writerow([])
-        
-        # Cabeçalho da tabela
         writer.writerow(["Nº Chamada", "Nome do Aluno", "Nota Bruta", "Nota Final", "Nível SAEB"])
         
-        # Dados dos alunos
         for aluno in alunos:
             res = resultados.get(aluno['id'])
             nota_bruta = round(float(res['nota_bruta']), 2) if res and res.get('nota_bruta') is not None else '-'
             nota_final = round(float(res['nota_final']), 1) if res and res.get('nota_final') is not None else '-'
             nivel = res.get('nivel_saeb', '-') if res else '-'
             
-            writer.writerow([
-                aluno.get('numero_chamada', '-'),
-                aluno.get('nome_completo', 'Sem nome'),
-                nota_bruta,
-                nota_final,
-                nivel
-            ])
+            writer.writerow([aluno.get('numero_chamada', '-'), aluno.get('nome_completo', 'Sem nome'), nota_bruta, nota_final, nivel])
         
-        # 5. Enviar o arquivo para download
         output.seek(0)
         nome_arquivo = f"resultados_{nome_turma}_{nome_avaliacao}.csv"
         
-        response = send_file(
-            io.BytesIO(output.getvalue().encode('utf-8-sig')),
-            mimetype='text/csv',
-            as_attachment=True,
-            download_name=nome_arquivo
-        )
+        response = send_file(io.BytesIO(output.getvalue().encode('utf-8-sig')), mimetype='text/csv', as_attachment=True, download_name=nome_arquivo)
         response.headers['Cache-Control'] = 'no-store'
         return response
         
@@ -3744,14 +3717,73 @@ def exportar_planilha():
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
-# ==========================================================
+# ========================================================================
+# 🤖 ROTA PARA GERAÇÃO DE IA (USANDO GROQ - MODELO QWEN)
+# ========================================================================
+@app.route('/api/ia_geral', methods=['POST', 'OPTIONS'])
+def ia_geral():
+    if request.method == 'OPTIONS':
+        return '', 204
+        
+    try:
+        data = request.json
+        prompt = data.get('prompt', '')
+        
+        if not prompt:
+            return jsonify({'sucesso': False, 'erro': 'Prompt não fornecido'}), 400
+            
+        print(f"🤖 [IA_GERAL] Recebido prompt com {len(prompt)} caracteres")
+        
+        groq_key = os.environ.get('GROQ_API_KEY')
+        if not groq_key:
+            print("❌ [IA_GERAL] Chave GROQ_API_KEY não configurada no Render!")
+            return jsonify({'sucesso': False, 'erro': 'Chave da IA não configurada no servidor.'}), 500
+        
+        print(f"🔑 [IA_GERAL] Chave Groq encontrada: {groq_key[:10]}...")
+        
+        from openai import OpenAI
+        client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
+        
+        # 🚨 MODELO QUE FUNCIONOU PARA VOCÊ!
+        modelo = 'qwen/qwen3.8-27b'
+        print(f"🚀 [IA_GERAL] Chamando Groq com modelo {modelo}...")
+        
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "Você é um professor especialista em educação brasileira, com profundo conhecimento da BNCC, Currículo Paulista e descritores SAEB. Responda sempre em português do Brasil, com linguagem clara e didática."},
+                {"role": "user", "content": prompt}
+            ],
+            model=modelo,
+            temperature=0.7,
+            max_tokens=4000,
+        )
+        
+        texto_final = chat_completion.choices[0].message.content
+        print(f"✅ [IA_GERAL] Sucesso! Resposta com {len(texto_final)} caracteres")
+        
+        return jsonify({'sucesso': True, 'texto': texto_final})
+        
+    except Exception as e:
+        import traceback
+        erro_detalhado = traceback.format_exc()
+        print(f"❌ [IA_GERAL] ERRO DETALHADO:\n{erro_detalhado}")
+        
+        erro_str = str(e).lower()
+        if 'rate_limit' in erro_str or '429' in erro_str:
+            return jsonify({'sucesso': False, 'erro': '⏰ Limite de requisições atingido. Aguarde alguns segundos.'}), 429
+        if 'api_key' in erro_str or 'authentication' in erro_str or '401' in erro_str:
+            return jsonify({'sucesso': False, 'erro': '🔑 Chave da API inválida. Contate o administrador.'}), 401
+        
+        return jsonify({'sucesso': False, 'erro': f'Erro interno: {str(e)[:200]}'}), 500
+
+# ========================================================================
 # 🚀 INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO!)
-# ==========================================================
+# ========================================================================
 if __name__ == '__main__':
     print("🚨🚨 OMR SISTEMA 2.0 - BACKEND COMPLETO 🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
     print(f"🔑 Gemini chaves: {len(GEMINI_CHAVES)} configurada(s)")
-    print(f"🤖 Modelos Gemini: {GEMINI_MODELOS}")
+    print(f"🤖 Gemini modelos: {GEMINI_MODELOS}")
     print(f"📄 Relatórios PDF: {'✅ ATIVOS' if PDF_OK else '❌ INATIVOS'}")
     
     port = int(os.environ.get("PORT", 10000))
