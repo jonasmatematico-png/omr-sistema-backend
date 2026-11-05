@@ -3805,9 +3805,9 @@ def ia_geral():
             'erro': f'Erro interno: {str(e)[:200]}'
         }), 500
 
-# ==========================================================
+# ===========================================================
 # 🚀 INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO!)
-# ==========================================================
+# ===========================================================
 if __name__ == '__main__':
     print("🚨🚨 OMR SISTEMA 2.0 - BACKEND COMPLETO 🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
