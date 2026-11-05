@@ -3776,6 +3776,106 @@ def ia_geral():
         
         return jsonify({'sucesso': False, 'erro': f'Erro interno: {str(e)[:200]}'}), 500
 
+    # ========================================================================
+# 📊 NOVA: EXPORTAR MATRIZ DE RESPOSTAS (PARA COPIAR E COLAR NA PLANILHA)
+# ========================================================================
+@app.route('/api/matriz_respostas/<int:id_avaliacao>', methods=['POST'])
+def matriz_respostas(id_avaliacao):
+    """Retorna tabela com TODAS as respostas de TODOS os alunos, questão por questão."""
+    try:
+        # 1. Recebe o filtro de turma
+        dados_recebidos = request.get_json() or {}
+        id_turma_filtro = dados_recebidos.get('id_turma')
+        
+        print(f"🔍 Matriz de respostas - Prova {id_avaliacao} | Turma: {id_turma_filtro}")
+        
+        # 2. Buscar alunos da turma (ou todos se não houver filtro)
+        query_alunos = supabase.table('alunos').select('id, nome_completo, numero_chamada, id_turma')
+        if id_turma_filtro:
+            query_alunos = query_alunos.eq('id_turma', int(id_turma_filtro))
+        query_alunos = query_alunos.order('numero_chamada')
+        response_alunos = query_alunos.execute()
+        alunos = response_alunos.data or []
+        
+        if not alunos:
+            return jsonify({"sucesso": False, "erro": "Nenhum aluno encontrado"}), 404
+        
+        # 3. Buscar gabarito oficial (para saber quantas questões tem)
+        questoes_resp = supabase.table('questoes') \
+            .select('numero, gabarito') \
+            .eq('id_avaliacao', id_avaliacao) \
+            .order('numero') \
+            .execute()
+        questoes = questoes_resp.data or []
+        total_questoes = len(questoes)
+        gabarito_oficial = {q['numero']: q['gabarito'] for q in questoes}
+        
+        # 4. Buscar TODAS as respostas de TODOS os alunos
+        ids_alunos = [a['id'] for a in alunos]
+        respostas_resp = supabase.table('respostas') \
+            .select('id_aluno, id_questao, resposta_aluno, correta') \
+            .eq('id_avaliacao', id_avaliacao) \
+            .in_('id_aluno', ids_alunos) \
+            .execute()
+        todas_respostas = respostas_resp.data or []
+        
+        # 5. Buscar número da questão para cada resposta
+        questoes_map = {}
+        for q in questoes:
+            questoes_map[q.get('id')] = q.get('numero')
+        
+        # 6. Organizar dados: {id_aluno: {numero_questao: resposta}}
+        respostas_por_aluno = {}
+        for resp in todas_respostas:
+            id_aluno = resp['id_aluno']
+            if id_aluno not in respostas_por_aluno:
+                respostas_por_aluno[id_aluno] = {}
+            
+            # Tenta pegar o número da questão
+            num_questao = questoes_map.get(resp.get('id_questao'))
+            if num_questao:
+                respostas_por_aluno[id_aluno][num_questao] = {
+                    'resposta': resp.get('resposta_aluno', ''),
+                    'correta': resp.get('correta', False)
+                }
+        
+        # 7. Montar a matriz final
+        matriz = []
+        for aluno in alunos:
+            linha = {
+                'numero_chamada': aluno.get('numero_chamada', '-'),
+                'nome': aluno.get('nome_completo', 'Sem nome'),
+                'id_aluno': aluno.get('id'),
+                'respostas': []
+            }
+            
+            # Para cada questão, pega a resposta do aluno
+            for num in range(1, total_questoes + 1):
+                resp_dados = respostas_por_aluno.get(aluno['id'], {}).get(num, {})
+                linha['respostas'].append({
+                    'questao': num,
+                    'resposta': resp_dados.get('resposta', '-'),
+                    'correta': resp_dados.get('correta', False),
+                    'gabarito': gabarito_oficial.get(num, '-')
+                })
+            
+            matriz.append(linha)
+        
+        print(f"✅ Matriz gerada: {len(matriz)} alunos × {total_questoes} questões")
+        
+        return jsonify({
+            "sucesso": True,
+            "matriz": matriz,
+            "total_alunos": len(matriz),
+            "total_questoes": total_questoes,
+            "gabarito": gabarito_oficial
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
 # ========================================================================
 # 🚀 INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO!)
 # ========================================================================
