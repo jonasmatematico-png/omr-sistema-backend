@@ -3718,10 +3718,11 @@ def exportar_planilha():
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 # ========================================================================
-# 🤖 ROTA PARA GERAÇÃO DE IA (USANDO GROQ - MODELO QWEN)
+# 🤖 ROTA PARA GERAÇÃO DE IA (USANDO GROQ - MODELO DISPONÍVEL)
 # ========================================================================
 @app.route('/api/ia_geral', methods=['POST', 'OPTIONS'])
 def ia_geral():
+    # 1. Responder ao preflight do CORS
     if request.method == 'OPTIONS':
         return '', 204
         
@@ -3734,24 +3735,39 @@ def ia_geral():
             
         print(f"🤖 [IA_GERAL] Recebido prompt com {len(prompt)} caracteres")
         
+        # 2. Pega a chave da Groq do Render
+        import os
         groq_key = os.environ.get('GROQ_API_KEY')
         if not groq_key:
             print("❌ [IA_GERAL] Chave GROQ_API_KEY não configurada no Render!")
-            return jsonify({'sucesso': False, 'erro': 'Chave da IA não configurada no servidor.'}), 500
+            return jsonify({
+                'sucesso': False, 
+                'erro': 'Chave da IA não configurada no servidor. Contate o administrador.'
+            }), 500
         
         print(f"🔑 [IA_GERAL] Chave Groq encontrada: {groq_key[:10]}...")
         
+        # 3. Chama a Groq
         from openai import OpenAI
-        client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
+        client = OpenAI(
+            api_key=groq_key,
+            base_url="https://api.groq.com/openai/v1"
+        )
         
-        # 🚨 MODELO QUE FUNCIONOU PARA VOCÊ!
+        # 🚨 MODELO DISPONÍVEL NA SUA CONTA (conforme testamos):
         modelo = 'qwen/qwen3.8-27b'
         print(f"🚀 [IA_GERAL] Chamando Groq com modelo {modelo}...")
         
         chat_completion = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "Você é um professor especialista em educação brasileira, com profundo conhecimento da BNCC, Currículo Paulista e descritores SAEB. Responda sempre em português do Brasil, com linguagem clara e didática."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "Você é um professor especialista em educação brasileira, com profundo conhecimento da BNCC, Currículo Paulista e descritores SAEB. Responda sempre em português do Brasil, com linguagem clara e didática."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
             ],
             model=modelo,
             temperature=0.7,
@@ -3761,7 +3777,10 @@ def ia_geral():
         texto_final = chat_completion.choices[0].message.content
         print(f"✅ [IA_GERAL] Sucesso! Resposta com {len(texto_final)} caracteres")
         
-        return jsonify({'sucesso': True, 'texto': texto_final})
+        return jsonify({
+            'sucesso': True, 
+            'texto': texto_final
+        })
         
     except Exception as e:
         import traceback
@@ -3770,120 +3789,30 @@ def ia_geral():
         
         erro_str = str(e).lower()
         if 'rate_limit' in erro_str or '429' in erro_str:
-            return jsonify({'sucesso': False, 'erro': '⏰ Limite de requisições atingido. Aguarde alguns segundos.'}), 429
+            return jsonify({
+                'sucesso': False, 
+                'erro': '⏰ Limite de requisições atingido. Aguarde alguns segundos e tente novamente.'
+            }), 429
+        
         if 'api_key' in erro_str or 'authentication' in erro_str or '401' in erro_str:
-            return jsonify({'sucesso': False, 'erro': '🔑 Chave da API inválida. Contate o administrador.'}), 401
-        
-        return jsonify({'sucesso': False, 'erro': f'Erro interno: {str(e)[:200]}'}), 500
-
-    # ========================================================================
-# 📊 NOVA: EXPORTAR MATRIZ DE RESPOSTAS (PARA COPIAR E COLAR NA PLANILHA)
-# ========================================================================
-@app.route('/api/matriz_respostas/<int:id_avaliacao>', methods=['POST'])
-def matriz_respostas(id_avaliacao):
-    """Retorna tabela com TODAS as respostas de TODOS os alunos, questão por questão."""
-    try:
-        # 1. Recebe o filtro de turma
-        dados_recebidos = request.get_json() or {}
-        id_turma_filtro = dados_recebidos.get('id_turma')
-        
-        print(f"🔍 Matriz de respostas - Prova {id_avaliacao} | Turma: {id_turma_filtro}")
-        
-        # 2. Buscar alunos da turma (ou todos se não houver filtro)
-        query_alunos = supabase.table('alunos').select('id, nome_completo, numero_chamada, id_turma')
-        if id_turma_filtro:
-            query_alunos = query_alunos.eq('id_turma', int(id_turma_filtro))
-        query_alunos = query_alunos.order('numero_chamada')
-        response_alunos = query_alunos.execute()
-        alunos = response_alunos.data or []
-        
-        if not alunos:
-            return jsonify({"sucesso": False, "erro": "Nenhum aluno encontrado"}), 404
-        
-        # 3. Buscar gabarito oficial (para saber quantas questões tem)
-        questoes_resp = supabase.table('questoes') \
-            .select('numero, gabarito') \
-            .eq('id_avaliacao', id_avaliacao) \
-            .order('numero') \
-            .execute()
-        questoes = questoes_resp.data or []
-        total_questoes = len(questoes)
-        gabarito_oficial = {q['numero']: q['gabarito'] for q in questoes}
-        
-        # 4. Buscar TODAS as respostas de TODOS os alunos
-        ids_alunos = [a['id'] for a in alunos]
-        respostas_resp = supabase.table('respostas') \
-            .select('id_aluno, id_questao, resposta_aluno, correta') \
-            .eq('id_avaliacao', id_avaliacao) \
-            .in_('id_aluno', ids_alunos) \
-            .execute()
-        todas_respostas = respostas_resp.data or []
-        
-        # 5. Buscar número da questão para cada resposta
-        questoes_map = {}
-        for q in questoes:
-            questoes_map[q.get('id')] = q.get('numero')
-        
-        # 6. Organizar dados: {id_aluno: {numero_questao: resposta}}
-        respostas_por_aluno = {}
-        for resp in todas_respostas:
-            id_aluno = resp['id_aluno']
-            if id_aluno not in respostas_por_aluno:
-                respostas_por_aluno[id_aluno] = {}
-            
-            # Tenta pegar o número da questão
-            num_questao = questoes_map.get(resp.get('id_questao'))
-            if num_questao:
-                respostas_por_aluno[id_aluno][num_questao] = {
-                    'resposta': resp.get('resposta_aluno', ''),
-                    'correta': resp.get('correta', False)
-                }
-        
-        # 7. Montar a matriz final
-        matriz = []
-        for aluno in alunos:
-            linha = {
-                'numero_chamada': aluno.get('numero_chamada', '-'),
-                'nome': aluno.get('nome_completo', 'Sem nome'),
-                'id_aluno': aluno.get('id'),
-                'respostas': []
-            }
-            
-            # Para cada questão, pega a resposta do aluno
-            for num in range(1, total_questoes + 1):
-                resp_dados = respostas_por_aluno.get(aluno['id'], {}).get(num, {})
-                linha['respostas'].append({
-                    'questao': num,
-                    'resposta': resp_dados.get('resposta', '-'),
-                    'correta': resp_dados.get('correta', False),
-                    'gabarito': gabarito_oficial.get(num, '-')
-                })
-            
-            matriz.append(linha)
-        
-        print(f"✅ Matriz gerada: {len(matriz)} alunos × {total_questoes} questões")
+            return jsonify({
+                'sucesso': False, 
+                'erro': '🔑 Chave da API inválida. Contate o administrador.'
+            }), 401
         
         return jsonify({
-            "sucesso": True,
-            "matriz": matriz,
-            "total_alunos": len(matriz),
-            "total_questoes": total_questoes,
-            "gabarito": gabarito_oficial
-        })
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"sucesso": False, "erro": str(e)}), 500
+            'sucesso': False, 
+            'erro': f'Erro interno: {str(e)[:200]}'
+        }), 500
 
-# ========================================================================
+# ==========================================================
 # 🚀 INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO!)
-# ========================================================================
+# ==========================================================
 if __name__ == '__main__':
     print("🚨🚨 OMR SISTEMA 2.0 - BACKEND COMPLETO 🚨")
     print(f"🔗 Supabase URL: {SUPABASE_URL}")
     print(f"🔑 Gemini chaves: {len(GEMINI_CHAVES)} configurada(s)")
-    print(f"🤖 Gemini modelos: {GEMINI_MODELOS}")
+    print(f"🤖 Modelos Gemini: {GEMINI_MODELOS}")
     print(f"📄 Relatórios PDF: {'✅ ATIVOS' if PDF_OK else '❌ INATIVOS'}")
     
     port = int(os.environ.get("PORT", 10000))
