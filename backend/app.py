@@ -1,5 +1,6 @@
 # app.py
 # OMR Sistema 2.0 - Backend Completo (Supabase + Câmera OMR + Gemini + Relatórios PDF)
+# MUDANÇA TESTE LABORATORIO 2027 - JONAS
 import os
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), 'variaveis.env'))
