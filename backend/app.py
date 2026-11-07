@@ -247,13 +247,85 @@ def get_tipos_avaliacao():
     except Exception as e:
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
+# ========================================================================
+# 🔒 ROTA 1: LISTAR TURMAS (FILTRADAS PELO PERFIL DO PROFESSOR)
+# ========================================================================
 @app.route('/api/turmas', methods=['GET'])
-def get_turmas():
+def listar_turmas_filtradas():
     try:
-        response = supabase.table("turmas").select("*").execute()
-        return jsonify({'sucesso': True, 'turmas': response.data})
+        # 1. Recebe o e-mail do professor (o frontend enviará isso)
+        email_professor = request.args.get('email')
+        
+        if not email_professor:
+            return jsonify({"sucesso": False, "erro": "Professor não identificado"}), 401
+            
+        print(f"🔒 Buscando turmas permitidas para: {email_professor}")
+        
+        # 2. Busca no Supabase quais IDs de turma este professor pode ver
+        perfil_resp = supabase.table("perfis") \
+            .select("turmas_ids") \
+            .eq("email", email_professor) \
+            .maybe_single() \
+            .execute()
+            
+        perfil = perfil_resp.data
+        
+        # Se não achar o perfil ou a lista estiver vazia, retorna lista vazia (Segurança!)
+        if not perfil or not perfil.get("turmas_ids"):
+            print("⚠️ Professor sem turmas vinculadas.")
+            return jsonify({"sucesso": True, "turmas": []})
+            
+        # 3. O PULO DO GATO: Busca APENAS as turmas que estão na lista do professor
+        turmas_resp = supabase.table("turmas") \
+            .select("id, nome, ano, turno") \
+            .in_("id", perfil["turmas_ids"]) \
+            .order("nome") \
+            .execute()
+            
+        print(f"✅ Sucesso! Liberadas {len(turmas_resp.data)} turmas.")
+        return jsonify({"sucesso": True, "turmas": turmas_resp.data})
+        
     except Exception as e:
-        return jsonify({'erro': str(e)}), 500
+        print(f"❌ Erro ao listar turmas: {e}")
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+
+# ========================================================================
+# 🔑 ROTA 2: OBTER PERMISSÕES (MÓDULOS ATIVOS) DO PROFESSOR
+# ========================================================================
+@app.route('/api/perfil', methods=['GET'])
+def obter_perfil_professor():
+    try:
+        email_professor = request.args.get('email')
+        
+        if not email_professor:
+            return jsonify({"sucesso": False, "erro": "E-mail não fornecido"}), 400
+            
+        # Busca as permissões no Supabase
+        perfil_resp = supabase.table("perfis") \
+            .select("email, nome, turmas_ids, modulos_ativos") \
+            .eq("email", email_professor) \
+            .maybe_single() \
+            .execute()
+            
+        perfil = perfil_resp.data
+        
+        if not perfil:
+            return jsonify({"sucesso": False, "erro": "Perfil não encontrado"}), 404
+            
+        # Retorna a lista de módulos para o frontend saber quais botões mostrar
+        return jsonify({
+            "sucesso": True, 
+            "perfil": {
+                "email": perfil.get("email"),
+                "nome": perfil.get("nome"),
+                "modulos_ativos": perfil.get("modulos_ativos", [])
+            }
+        })
+        
+    except Exception as e:
+        print(f"❌ Erro ao obter perfil: {e}")
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 @app.route('/api/turmas/<int:turma_id>/alunos', methods=['GET'])
 def get_alunos_turma(turma_id):
