@@ -1,5 +1,6 @@
 # app.py
 # OMR Sistema 2.0 - Backend Completo (Supabase + Câmera OMR + Gemini + Relatórios PDF)
+# MUDANÇA TESTE LABORATORIO 2027 - JONAS
 import os
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), 'variaveis.env'))
@@ -248,12 +249,11 @@ def get_tipos_avaliacao():
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
 # ========================================================================
-# 🔒 ROTA 1: LISTAR TURMAS (FILTRADAS PELO PERFIL DO PROFESSOR)
+# 🔒 ROTA 1: LISTAR TURMAS (FILTRADAS PELO PERFIL DO PROFESSOR) - VERSÃO FINAL
 # ========================================================================
 @app.route('/api/turmas', methods=['GET'])
 def listar_turmas_filtradas():
     try:
-        # 1. Recebe o e-mail do professor (o frontend enviará isso)
         email_professor = request.args.get('email')
         
         if not email_professor:
@@ -261,23 +261,27 @@ def listar_turmas_filtradas():
             
         print(f"🔒 Buscando turmas permitidas para: {email_professor}")
         
-        # 2. Busca no Supabase quais IDs de turma este professor pode ver
-        perfil_resp = supabase.table("perfis") \
-            .select("turmas_ids") \
+        # 1. Busca o perfil de forma segura
+        response = supabase.table("perfis") \
+            .select("turmas_ids, modulos_ativos") \
             .eq("email", email_professor) \
-            .maybe_single() \
             .execute()
             
-        perfil = perfil_resp.data
+        # 2. Se não encontrar o e-mail, retorna lista vazia (Segurança máxima!)
+        if not response.data or len(response.data) == 0:
+            print(f"⚠️ Perfil não encontrado para: {email_professor}")
+            return jsonify({"sucesso": True, "turmas": []})
+            
+        perfil = response.data[0]
         
-        # Se não achar o perfil ou a lista estiver vazia, retorna lista vazia (Segurança!)
-        if not perfil or not perfil.get("turmas_ids"):
+        # 3. Se o perfil existir, mas não tiver turmas vinculadas
+        if not perfil.get("turmas_ids"):
             print("⚠️ Professor sem turmas vinculadas.")
             return jsonify({"sucesso": True, "turmas": []})
             
-        # 3. O PULO DO GATO: Busca APENAS as turmas que estão na lista do professor
+        # 4. O PULO DO GATO: Pedir EXATAMENTE as colunas que existem na sua tabela
         turmas_resp = supabase.table("turmas") \
-            .select("id, nome, ano, turno") \
+            .select("id, nome, ano, serie") \
             .in_("id", perfil["turmas_ids"]) \
             .order("nome") \
             .execute()
@@ -288,7 +292,6 @@ def listar_turmas_filtradas():
     except Exception as e:
         print(f"❌ Erro ao listar turmas: {e}")
         return jsonify({"sucesso": False, "erro": str(e)}), 500
-
 
 # =========================================================================
 # 🔑 ROTA 2: OBTER PERMISSÕES (MÓDULOS ATIVOS) DO PROFESSOR
