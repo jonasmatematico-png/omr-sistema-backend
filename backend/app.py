@@ -293,42 +293,66 @@ def listar_turmas_filtradas():
         print(f"❌ Erro ao listar turmas: {e}")
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
-# =========================================================================
-# 🔑 ROTA 2: OBTER PERMISSÕES (MÓDULOS ATIVOS) DO PROFESSOR
-# =========================================================================
+# ========================================================================
+# 🔒 ROTA: OBTER PERFIL DO USUÁRIO (MÓDULOS E TURMAS) - VERSÃO BLINDADA
+# ========================================================================
 @app.route('/api/perfil', methods=['GET'])
-def obter_perfil_professor():
+def obter_perfil():
     try:
-        email_professor = request.args.get('email')
+        email = request.args.get('email')
         
-        if not email_professor:
-            return jsonify({"sucesso": False, "erro": "E-mail não fornecido"}), 400
+        if not email:
+            return jsonify({"sucesso": False, "erro": "Email não fornecido"}), 400
             
-        # Busca as permissões no Supabase
-        perfil_resp = supabase.table("perfis") \
-            .select("email, nome, turmas_ids, modulos_ativos") \
-            .eq("email", email_professor) \
-            .maybe_single() \
+        email_limpo = email.lower().strip()
+        print(f"🔍 Buscando perfil para: {email_limpo}")
+        
+        # 1. Busca no Supabase
+        response = supabase.table("perfis") \
+            .select("turmas_ids, modulos_ativos") \
+            .eq("email", email_limpo) \
             .execute()
             
-        perfil = perfil_resp.data
-        
-        if not perfil:
-            return jsonify({"sucesso": False, "erro": "Perfil não encontrado"}), 404
+        # 2. Se não encontrar o usuário, retorna vazio (NÃO QUEBRA O SISTEMA!)
+        if not response.data or len(response.data) == 0:
+            print(f"⚠️ Perfil não encontrado para: {email_limpo}")
+            return jsonify({
+                "sucesso": True, 
+                "perfil": {
+                    "turmas_ids": [], 
+                    "modulos_ativos": []
+                }
+            })
             
-        # Retorna a lista de módulos para o frontend saber quais botões mostrar
+        perfil = response.data[0]
+        
+        # 3. Normaliza os dados (garante que sejam listas, mesmo que o Supabase mande string ou None)
+        turmas = perfil.get("turmas_ids") or []
+        modulos = perfil.get("modulos_ativos") or []
+        
+        # Se vier como string do Postgres (ex: "{dissertativa, objetiva}"), converte para lista
+        if isinstance(modulos, str):
+            modulos = modulos.replace('{', '').replace('}', '').split(',') if modulos != '{}' else []
+            modulos = [m.strip() for m in modulos if m.strip()]
+            
+        if isinstance(turmas, str):
+            turmas = [int(x) for x in turmas.replace('{', '').replace('}', '').split(',') if x.strip()] if turmas != '{}' else []
+
+        print(f"✅ Perfil encontrado! Módulos: {modulos}, Turmas: {turmas}")
+        
         return jsonify({
             "sucesso": True, 
             "perfil": {
-                "email": perfil.get("email"),
-                "nome": perfil.get("nome"),
-                "modulos_ativos": perfil.get("modulos_ativos", [])
+                "turmas_ids": turmas,
+                "modulos_ativos": modulos
             }
         })
         
     except Exception as e:
-        print(f"❌ Erro ao obter perfil: {e}")
+        # 4. SE DER ERRO, ELE IMPRIME NO LOG DO RENDER E RETORNA JSON, NÃO QUEBRA A PÁGINA!
+        print(f"❌ ERRO CRÍTICO NO BACKEND (api/perfil): {e}")
         return jsonify({"sucesso": False, "erro": str(e)}), 500
+
 
 @app.route('/api/turmas/<int:turma_id>/alunos', methods=['GET'])
 def get_alunos_turma(turma_id):
