@@ -3920,6 +3920,122 @@ def matriz_respostas(id_avaliacao):
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
+        # ==========================================================
+# 🧩 MÓDULO DE INCLUSÃO: GERAR ATIVIDADE ADAPTADA (TEA/TDAH)
+# ==========================================================
+@app.route('/api/gerar_adaptacao', methods=['POST', 'OPTIONS'])
+def gerar_adaptacao():
+    """Recebe o perfil NEE do aluno + atividade original e devolve a versão adaptada."""
+    if request.method == 'OPTIONS':
+        return '', 204
+    try:
+        dados = request.get_json() or {}
+        perfil = dados.get('perfil') or {}
+        atividade_original = (dados.get('atividade_original') or '').strip()
+        contexto = dados.get('contexto') or {}
+
+        if not perfil:
+            return jsonify({"sucesso": False, "erro": "Perfil do aluno não enviado"}), 400
+        if not atividade_original:
+            return jsonify({"sucesso": False, "erro": "Cole a atividade original"}), 400
+
+        tipo_nee = perfil.get('tipo_nee', 'TEA')
+        nivel = perfil.get('nivel_suporte', 3)
+        prefs = ", ".join(perfil.get('estrategias_preferenciais') or []) or "não informadas"
+        evitar = ", ".join(perfil.get('estrategias_evitar') or []) or "não informadas"
+        tempo_extra = perfil.get('tempo_adicional_minutos', 10)
+        obs = perfil.get('observacoes_geral') or "nenhuma"
+
+        regras_tea = (
+            "REGRAS PARA TEA:\n"
+            "- Linguagem literal e direta (sem metáforas, ironias ou duplo sentido).\n"
+            "- Frases curtas (máximo 15 palavras por frase).\n"
+            "- Divida cada questão em no máximo 3 passos numerados.\n"
+            "- Dê previsibilidade: informe no início quantas questões são.\n"
+            "- Inclua um exemplo resolvido antes da primeira questão.\n"
+            "- Sugira apoio visual concreto (descreva a imagem em 'imagem_sugerida').\n"
+        )
+        regras_tdah = (
+            "REGRAS PARA TDAH:\n"
+            "- Questões curtas (no máximo 3 linhas de enunciado).\n"
+            "- Destaque o comando principal em LETRAS MAIÚSCULAS.\n"
+            "- Varie o formato (múltipla escolha, verdadeiro/falso, completar).\n"
+            "- Inclua mensagens de incentivo a cada 3 questões (checkpoints).\n"
+            "- Evite blocos longos de texto; use listas.\n"
+        )
+        if tipo_nee == 'TEA_TDAH':
+            regras = regras_tea + "\n" + regras_tdah
+        elif tipo_nee == 'TDAH':
+            regras = regras_tdah
+        else:
+            regras = regras_tea
+
+        formato = (
+            '{"titulo":"...","instrucoes_gerais":"...",'
+            '"exemplo_resolvido":{"enunciado":"...","resposta":"..."},'
+            '"questoes":[{"numero":1,"enunciado":"...","passos":["passo 1","passo 2"],'
+            '"alternativas":["A) ...","B) ...","C) ...","D) ..."],'
+            '"resposta_correta":"A","imagem_sugerida":"descrição da imagem","dica_visual":"..."}],'
+            '"tempo_sugerido_minutos":30,"estrategias_aplicadas":["..."]}'
+        )
+
+        prompt = (
+            f"Você é um especialista em educação inclusiva brasileira (TEA e TDAH), "
+            f"com domínio da BNCC e dos descritores SAEB.\n\n"
+            f"PERFIL DO ALUNO:\n"
+            f"- NEE: {tipo_nee} | Nível de suporte: {nivel} (escala 1 a 5)\n"
+            f"- Estratégias que funcionam: {prefs}\n"
+            f"- Estratégias a evitar: {evitar}\n"
+            f"- Tempo adicional: {tempo_extra} minutos\n"
+            f"- Observações do professor: {obs}\n\n"
+            f"CONTEXTO DA AULA:\n"
+            f"- Disciplina: {contexto.get('disciplina', 'Matemática')}\n"
+            f"- Ano/Série: {contexto.get('ano', 'não informado')}\n"
+            f"- Tema: {contexto.get('tema', 'não informado')}\n"
+            f"- Habilidade/Descritor: {contexto.get('habilidade', 'não informado')}\n\n"
+            f"ATIVIDADE ORIGINAL:\n{atividade_original}\n\n"
+            f"TAREFA: Reescreva a atividade adaptada para este aluno.\n"
+            f"IMPORTANTE: MANTENHA o mesmo objetivo de aprendizagem e o mesmo conteúdo. "
+            f"Adapte a FORMA (linguagem, estrutura, apoios), não o conteúdo. Não infantilize.\n\n"
+            f"{regras}\n"
+            f"Responda SOMENTE um JSON válido neste formato exato:\n{formato}"
+        )
+
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json"},
+        }
+
+        texto, modelo, chave = _gemini_chamar(payload)
+        if texto is None:
+            return jsonify({"sucesso": False, "erro": f"Sem cota em todas as chaves: {chave}"}), 429
+
+        try:
+            texto_limpo = texto.replace("```json", "").replace("```", "").strip()
+            adaptacao = jsonlib.loads(texto_limpo)
+        except Exception:
+            adaptacao = {
+                "titulo": "Atividade adaptada",
+                "instrucoes_gerais": "",
+                "questoes": [{"numero": 1, "enunciado": texto}],
+                "tempo_sugerido_minutos": 30,
+                "estrategias_aplicadas": []
+            }
+
+        print(f"🧩 [INCLUSÃO] Adaptação gerada para {perfil.get('nome_aluno', '?')} ({tipo_nee}) com {modelo}")
+        return jsonify({
+            "sucesso": True,
+            "adaptacao": adaptacao,
+            "prompt_usado": prompt,
+            "modelo": modelo,
+            "chave_usada": chave
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
 # ==========================================================
 # 🚀 INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO!)
 # ==========================================================
