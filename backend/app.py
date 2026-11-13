@@ -4035,6 +4035,7 @@ def gerar_adaptacao():
         import traceback
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
+        
 
 # ==========================================================
 # 🚀 INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO!)
