@@ -3920,7 +3920,7 @@ def matriz_respostas(id_avaliacao):
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
 
-        # ==========================================================
+# ==========================================================
 # 🧩 MÓDULO DE INCLUSÃO: GERAR ATIVIDADE ADAPTADA (TEA/TDAH)
 # ==========================================================
 @app.route('/api/gerar_adaptacao', methods=['POST', 'OPTIONS'])
