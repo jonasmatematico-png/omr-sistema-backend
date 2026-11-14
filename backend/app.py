@@ -3922,10 +3922,10 @@ def matriz_respostas(id_avaliacao):
 
 # ==========================================================
 # 🧩 MÓDULO DE INCLUSÃO: GERAR ATIVIDADE ADAPTADA (TEA/TDAH)
+# Usa Groq (mesma IA do resto do sistema) ou Gemini se houver chaves
 # ==========================================================
 @app.route('/api/gerar_adaptacao', methods=['POST', 'OPTIONS'])
 def gerar_adaptacao():
-    """Recebe o perfil NEE do aluno + atividade original e devolve a versão adaptada."""
     if request.method == 'OPTIONS':
         return '', 204
     try:
@@ -4001,19 +4001,53 @@ def gerar_adaptacao():
             f"Responda SOMENTE um JSON válido neste formato exato:\n{formato}"
         )
 
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json"},
-        }
+        texto = None
+        modelo_usado = None
 
-        texto, modelo, chave = _gemini_chamar(payload)
-        if texto is None:
-            return jsonify({"sucesso": False, "erro": f"Sem cota em todas as chaves: {chave}"}), 429
+        # 1) Tenta Gemini SOMENTE se houver chaves configuradas
+        if GEMINI_CHAVES:
+            try:
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json"},
+                }
+                texto, modelo_usado, _chave = _gemini_chamar(payload)
+            except Exception as e_g:
+                print(f"⚠️ [INCLUSÃO] Gemini falhou, usando Groq: {e_g}")
+                texto = None
 
+        # 2) Usa a Groq (mesma chave e modelo do /api/ia_geral que já funciona)
+        if not texto:
+            groq_key = os.environ.get('GROQ_API_KEY')
+            if not groq_key:
+                return jsonify({
+                    "sucesso": False,
+                    "erro": "Nenhuma IA configurada: defina GROQ_API_KEY no Render."
+                }), 500
+            client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
+            chat = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "Você é um especialista em educação inclusiva brasileira (TEA e TDAH). Responda SOMENTE com JSON válido, sem texto extra."},
+                    {"role": "user", "content": prompt}
+                ],
+                model='qwen/qwen3.8-27b',
+                temperature=0.4,
+                max_tokens=4000,
+            )
+            texto = chat.choices[0].message.content
+            modelo_usado = 'Groq (qwen)'
+
+        # 3) Extrai o JSON com segurança (remove cercas ```json e textos extras)
+        adaptacao = None
         try:
-            texto_limpo = texto.replace("```json", "").replace("```", "").strip()
-            adaptacao = jsonlib.loads(texto_limpo)
+            ini = texto.find('{')
+            fim = texto.rfind('}')
+            if ini != -1 and fim != -1 and fim > ini:
+                adaptacao = jsonlib.loads(texto[ini:fim + 1])
         except Exception:
+            adaptacao = None
+
+        if not adaptacao:
             adaptacao = {
                 "titulo": "Atividade adaptada",
                 "instrucoes_gerais": "",
@@ -4022,19 +4056,24 @@ def gerar_adaptacao():
                 "estrategias_aplicadas": []
             }
 
-        print(f"🧩 [INCLUSÃO] Adaptação gerada para {perfil.get('nome_aluno', '?')} ({tipo_nee}) com {modelo}")
+        print(f"🧩 [INCLUSÃO] Adaptação gerada para {perfil.get('nome_aluno', '?')} ({tipo_nee}) com {modelo_usado}")
         return jsonify({
             "sucesso": True,
             "adaptacao": adaptacao,
             "prompt_usado": prompt,
-            "modelo": modelo,
-            "chave_usada": chave
+            "modelo": modelo_usado
         })
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"sucesso": False, "erro": str(e)}), 500
+        erro_str = str(e)
+        if 'rate_limit' in erro_str.lower() or '429' in erro_str:
+            return jsonify({
+                "sucesso": False,
+                "erro": "⏰ Limite de requisições da IA atingido. Aguarde alguns segundos e tente novamente."
+            }), 429
+        return jsonify({"sucesso": False, "erro": erro_str}), 500
         
 
 # ==========================================================
