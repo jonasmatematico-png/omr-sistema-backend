@@ -4074,6 +4074,85 @@ def gerar_adaptacao():
                 "erro": "⏰ Limite de requisições da IA atingido. Aguarde alguns segundos e tente novamente."
             }), 429
         return jsonify({"sucesso": False, "erro": erro_str}), 500
+
+        # ========================================================================
+# 📊 DIAGNÓSTICO: DESEMPENHO POR QUESTÃO (MAIS ACERTADAS / MAIS ERRADAS)
+# ========================================================================
+@app.route('/api/diagnostico_questoes/<int:id_avaliacao>', methods=['GET'])
+def diagnostico_questoes(id_avaliacao):
+    try:
+        id_turma = request.args.get('id_turma')
+        
+        # 1. Buscar alunos (filtrados pela turma, se houver)
+        query_alunos = supabase.table('alunos').select('id')
+        if id_turma:
+            query_alunos = query_alunos.eq('id_turma', int(id_turma))
+        
+        alunos = query_alunos.execute().data
+        if not alunos:
+            return jsonify({"sucesso": True, "questoes": []})
+            
+        ids_alunos = [a['id'] for a in alunos]
+        
+        # 2. Buscar questões da avaliação
+        questoes = supabase.table('questoes') \
+            .select('id, numero, gabarito') \
+            .eq('id_avaliacao', id_avaliacao) \
+            .order('numero') \
+            .execute().data
+            
+        if not questoes:
+            return jsonify({"sucesso": True, "questoes": []})
+            
+        # 3. Buscar todas as respostas desses alunos nesta prova
+        respostas = supabase.table('respostas') \
+            .select('id_questao, correta') \
+            .in_('id_aluno', ids_alunos) \
+            .eq('id_avaliacao', id_avaliacao) \
+            .execute().data
+            
+        # 4. Agregar estatísticas por questão
+        stats = {}
+        for q in questoes:
+            stats[q['id']] = {
+                'numero': q['numero'],
+                'total': 0,
+                'acertos': 0,
+                'gabarito': q.get('gabarito', '-')
+            }
+            
+        for r in respostas:
+            q_id = r['id_questao']
+            if q_id in stats:
+                stats[q_id]['total'] += 1
+                if r.get('correta'):
+                    stats[q_id]['acertos'] += 1
+                    
+        # 5. Calcular porcentagens e formatar
+        resultado = []
+        for q_id, data in stats.items():
+            total = data['total']
+            acertos = data['acertos']
+            pct = round((acertos / total * 100), 1) if total > 0 else 0.0
+            
+            resultado.append({
+                'numero': data['numero'],
+                'total_respostas': total,
+                'acertos': acertos,
+                'erros': total - acertos,
+                'taxa_acerto': pct,
+                'gabarito': data['gabarito']
+            })
+            
+        # 6. Ordenar: da menor taxa de acerto (mais errada) para a maior (mais acertada)
+        resultado.sort(key=lambda x: x['taxa_acerto'])
+        
+        return jsonify({"sucesso": True, "questoes": resultado})
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
         
 
 # ==========================================================
