@@ -4075,7 +4075,7 @@ def gerar_adaptacao():
             }), 429
         return jsonify({"sucesso": False, "erro": erro_str}), 500
 
-        # ========================================================================
+# ========================================================================
 # 📊 DIAGNÓSTICO: DESEMPENHO POR QUESTÃO (MAIS ACERTADAS / MAIS ERRADAS)
 # ========================================================================
 @app.route('/api/diagnostico_questoes/<int:id_avaliacao>', methods=['GET'])
@@ -4149,6 +4149,51 @@ def diagnostico_questoes(id_avaliacao):
         
         return jsonify({"sucesso": True, "questoes": resultado})
         
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+# ==========================================================
+# 🚀 CORREÇÃO RÁPIDA: BUSCAR ALUNO + TURMA + PROVA (usa chave mestra, atravessa RLS)
+# ==========================================================
+@app.route('/api/dados_correcao_rapida/<int:id_aluno>', methods=['GET', 'OPTIONS'])
+def dados_correcao_rapida(id_aluno):
+    if request.method == 'OPTIONS':
+        return '', 204
+    try:
+        aluno = supabase_admin.table('alunos') \
+            .select('id, nome_completo, numero_chamada, id_turma') \
+            .eq('id', id_aluno).maybe_single().execute()
+        if not aluno.data:
+            return jsonify({"sucesso": False, "erro": f"Aluno {id_aluno} não encontrado"}), 404
+
+        a = aluno.data
+        nome_turma = 'Turma não identificada'
+        if a.get('id_turma'):
+            t = supabase_admin.table('turmas').select('nome').eq('id', a['id_turma']).maybe_single().execute()
+            if t.data:
+                nome_turma = t.data['nome']
+
+        # Última prova OBJETIVA da turma (para QRs antigos sem id_prova)
+        id_prova = None
+        if a.get('id_turma'):
+            ps = supabase_admin.table('avaliacoes') \
+                .select('id, nome, modo_correcao, tipo') \
+                .eq('id_turma', a['id_turma']) \
+                .order('id', desc=True).limit(20).execute()
+            for pv in (ps.data or []):
+                modo = str(pv.get('modo_correcao') or pv.get('tipo') or '').lower()
+                if 'objet' in modo or 'omr' in modo or 'multipla' in modo or 'multiple' in modo:
+                    id_prova = pv['id']
+                    break
+
+        return jsonify({
+            "sucesso": True,
+            "aluno": a,
+            "nome_turma": nome_turma,
+            "id_prova": id_prova
+        })
     except Exception as e:
         import traceback
         traceback.print_exc()
