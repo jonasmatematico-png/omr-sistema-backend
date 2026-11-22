@@ -800,8 +800,20 @@ def pagina_baixar_gabaritos():
   }}
   function baixarEtiquetas() {{
     const t = document.getElementById('turma').value;
-    window.open('/api/etiquetas/' + t, '_blank');
-  }}
+    const p = document.getElementById('prova').value;
+    
+    if (!t) {{
+        alert('⚠️ Selecione uma turma primeiro!');
+        return;
+    }}
+    
+    let url = 'https://omr-backend-laboratorio.onrender.com/api/etiquetas/' + t;
+    if (p) {{
+        url += '?id_prova=' + p;
+    }}
+    
+    window.open(url, '_blank');
+}}
 </script>
 </body>
 </html>'''
