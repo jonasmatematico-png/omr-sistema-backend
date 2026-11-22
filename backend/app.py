@@ -4210,6 +4210,119 @@ def dados_correcao_rapida(id_aluno):
         import traceback
         traceback.print_exc()
         return jsonify({"sucesso": False, "erro": str(e)}), 500
+
+        # ========================================================================
+# 🏷️ ROTA: GERAR ETIQUETAS DE QR CODE DA TURMA (PDF) - VERSÃO COMBO
+# ========================================================================
+@app.route('/api/etiquetas/<int:id_turma>', methods=['GET'])
+def gerar_etiquetas_turma(id_turma):
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import cm
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+        from reportlab.lib.enums import TA_CENTER
+        import io
+        import qrcode
+
+        # 🆕 1. Pegar o ID da prova que veio do site (se houver)
+        id_prova = request.args.get('id_prova', type=int)
+
+        # 2. Buscar nome da turma
+        resp_turma = supabase_admin.table("turmas").select("nome").eq("id", id_turma).maybe_single().execute()
+        nome_turma = resp_turma.data['nome'] if resp_turma.data else f"Turma {id_turma}"
+
+        # 3. Buscar alunos da turma ordenados por número
+        resp_alunos = supabase_admin.table("alunos").select("id, nome_completo, numero_chamada").eq("id_turma", id_turma).order("numero_chamada").execute()
+        alunos = resp_alunos.data or []
+
+        if not alunos:
+            return "Nenhum aluno encontrado nesta turma.", 404
+
+        # 4. Preparar o documento PDF
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=1*cm, leftMargin=1*cm, topMargin=1*cm, bottomMargin=1*cm)
+        elements = []
+
+        styles = getSampleStyleSheet()
+        style_titulo = ParagraphStyle(name='Titulo', fontSize=16, alignment=TA_CENTER, spaceAfter=12)
+        style_nome = ParagraphStyle(name='Nome', fontSize=10, alignment=TA_CENTER, spaceAfter=2)
+        style_num = ParagraphStyle(name='Numero', fontSize=9, alignment=TA_CENTER, textColor='#666666')
+
+        elements.append(Paragraph(f"Etiquetas de QR Code - {nome_turma}", style_titulo))
+        elements.append(Spacer(1, 0.5*cm))
+
+        # 5. Montar a tabela de etiquetas (3 colunas)
+        dados_tabela = []
+        linha_atual = []
+        
+        for aluno in alunos:
+            nome = aluno.get('nome_completo', 'Sem nome')
+            num = str(aluno.get('numero_chamada', ''))
+            aluno_id = aluno['id']
+            
+            # 🆕 6. LÓGICA DO QR CODE: Se tiver prova, gera COMBO. Se não, genérico.
+            if id_prova:
+                qr_data = f"OMRALUNO:{id_prova}:{aluno_id}"
+            else:
+                qr_data = f"OMRCARD:{aluno_id}"
+            
+            # Gerar QR Code
+            qr = qrcode.QRCode(version=1, box_size=4, border=1)
+            qr.add_data(qr_data)
+            qr.make(fit=True)
+            img_qr = qr.make_image(fill_color="black", back_color="white")
+            
+            # Converter imagem para o formato do ReportLab
+            img_buffer = io.BytesIO()
+            img_qr.save(img_buffer, format='PNG')
+            img_buffer.seek(0)
+            qr_img = Image(img_buffer, width=2.5*cm, height=2.5*cm)
+            
+            celula = [
+                qr_img,
+                Paragraph(f"<b>{num}. {nome}</b>", style_nome),
+                Paragraph(nome_turma, style_num)
+            ]
+            linha_atual.append(celula)
+            
+            # A cada 3 etiquetas, fecha a linha
+            if len(linha_atual) == 3:
+                dados_tabela.append(linha_atual)
+                linha_atual = []
+        
+        # Completa a última linha se faltar
+        if linha_atual:
+            while len(linha_atual) < 3:
+                linha_atual.append("")
+            dados_tabela.append(linha_atual)
+
+        # 7. Estilo da tabela
+        tbl_style = TableStyle([
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ])
+
+        col_widths = [6.3*cm, 6.3*cm, 6.3*cm] # 3 colunas na folha A4
+        tbl = Table(dados_tabela, colWidths=col_widths)
+        tbl.setStyle(tbl_style)
+        elements.append(tbl)
+
+        # 8. Gerar e enviar o PDF
+        doc.build(elements)
+        buffer.seek(0)
+
+        nome_arquivo = f"etiquetas_{nome_turma.replace(' ', '_')}.pdf"
+        return send_file(buffer, mimetype='application/pdf', as_attachment=True, download_name=nome_arquivo)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"Erro ao gerar etiquetas: {str(e)}", 500
         
 
 # ==========================================================
