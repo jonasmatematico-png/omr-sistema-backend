@@ -4301,7 +4301,7 @@ def corrigir_dissertativa():
                 model="qwen/qwen3.8-27b",
                 messages=[{"role": "user", "content": conteudo}],
                 temperature=0.1,
-                max_completion_tokens=2000
+                max_tokens=2000
             )
 
             texto = completion.choices[0].message.content
