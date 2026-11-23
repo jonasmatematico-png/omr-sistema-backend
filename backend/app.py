@@ -4254,83 +4254,58 @@ def gerar_etiquetas_turma(id_turma):
         return f"Erro ao gerar etiquetas: {str(e)}", 500
 
 # ========================================================================
-# ✍️ CORREÇÃO DISSERTATIVA COM IA (GROQ - LLAMA 3.2 VISION)
+# ✍️ CORREÇÃO DISSERTATIVA COM IA (GROQ VISION) - FORMATO MULTI-PÁGINA
 # ========================================================================
 @app.route('/api/corrigir_dissertativa', methods=['POST', 'OPTIONS'])
 def corrigir_dissertativa():
     if request.method == 'OPTIONS':
         return '', 204
-        
     try:
         import json
         from groq import Groq
-        
+
         data = request.json
-        imagem_base64 = data.get('imagem')
-        enunciado = data.get('enunciado', 'Analise a resposta do aluno na imagem.')
-        gabarito = data.get('gabarito', 'Avalie a coerência e a presença de palavras-chave.')
-        valor_maximo = float(data.get('valor_maximo', 10.0))
+        prompt = data.get('prompt', '')
+        imagens = data.get('imagens', [])  # [{mime: 'image/jpeg', data: 'base64 sem prefixo'}]
 
-        # Inicializa o cliente Groq usando a chave que já está no seu Render
-        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        if not prompt:
+            return jsonify({"sucesso": False, "erro": "Prompt não enviado."}), 400
+        if not imagens:
+            return jsonify({"sucesso": False, "erro": "Nenhuma imagem enviada."}), 400
 
-        prompt = f"""
-        Você é um professor experiente corrigindo uma prova dissertativa.
-        
-        DADOS DA QUESTÃO:
-        - Enunciado: {enunciado}
-        - Gabarito esperado: {gabarito}
-        - Valor máximo da questão: {valor_maximo}
-        
-        TAREFA:
-        Analise a imagem da resposta manuscrita do aluno. Compare com o gabarito.
-        Retorne APENAS um objeto JSON válido, sem formatação markdown (sem ```json), com esta estrutura exata:
-        {{
-            "nota_sugerida": <numero entre 0 e {valor_maximo}>,
-            "justificativa": "<explicação técnica curta do porquê da nota, citando o que o aluno acertou ou errou>",
-            "feedback_aluno": "<mensagem encorajadora e construtiva de 1 frase para o aluno>"
-        }}
-        """
+        chave = os.getenv("GROQ_API_KEY")
+        if not chave:
+            return jsonify({"sucesso": False, "erro": "Nenhuma chave Groq configurada no servidor."}), 500
+
+        client = Groq(api_key=chave)
+
+        # Monta o conteúdo: texto + TODAS as páginas
+        conteudo = [{"type": "text", "text": prompt}]
+        for img in imagens:
+            mime = img.get('mime', 'image/jpeg')
+            b64 = img.get('data', '')
+            if b64:
+                conteudo.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{b64}"}
+                })
 
         completion = client.chat.completions.create(
-            model="llama-3.2-90b-vision-preview",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": imagem_base64
-                            }
-                        }
-                    ]
-                }
-            ],
-            temperature=0.2,
-            max_tokens=500
+            model="llama-3.2-11b-vision-preview",
+            messages=[{"role": "user", "content": conteudo}],
+            temperature=0.1,
+            max_tokens=2000
         )
 
-        resposta_ia = completion.choices[0].message.content
-        
-        # Limpeza de segurança para remover marcas de markdown se a IA insistir
-        resposta_ia = resposta_ia.replace("```json", "").replace("```", "").strip()
-        
-        resultado = json.loads(resposta_ia)
+        texto = completion.choices[0].message.content
+        texto = texto.replace("```json", "").replace("```", "").strip()
 
-        return jsonify({
-            "sucesso": True,
-            "nota": float(resultado.get("nota_sugerida", 0)),
-            "justificativa": resultado.get("justificativa", "Análise concluída."),
-            "feedback": resultado.get("feedback_aluno", "Bom trabalho!")
-        })
+        return jsonify({"sucesso": True, "texto": texto})
 
     except Exception as e:
         import traceback
-        traceback.print_exc() # Isso vai mostrar o erro real no log do Render
-        return jsonify({"sucesso": False, "erro": f"Erro na IA: {str(e)}"}), 500
-
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": str(e)}), 500
         
 
 # ==========================================================
