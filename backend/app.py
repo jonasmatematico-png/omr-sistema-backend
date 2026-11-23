@@ -4256,24 +4256,26 @@ def gerar_etiquetas_turma(id_turma):
 # ========================================================================
 # ✍️ CORREÇÃO DISSERTATIVA COM IA (GROQ - LLAMA 3.2 VISION)
 # ========================================================================
-@app.route('/api/corrigir_dissertativa', methods=['POST'])
+@app.route('/api/corrigir_dissertativa', methods=['POST', 'OPTIONS'])
 def corrigir_dissertativa():
+    if request.method == 'OPTIONS':
+        return '', 204
+        
     try:
         import json
-        import base64
+        from groq import Groq
         
         data = request.json
-        imagem_base64 = data.get('imagem') # Ex: "data:image/jpeg;base64,/9j/4AAQ..."
-        enunciado = data.get('enunciado', 'Leia a resposta do aluno na imagem.')
+        imagem_base64 = data.get('imagem')
+        enunciado = data.get('enunciado', 'Analise a resposta do aluno na imagem.')
         gabarito = data.get('gabarito', 'Avalie a coerência e a presença de palavras-chave.')
         valor_maximo = float(data.get('valor_maximo', 10.0))
 
-        # Inicializa o cliente Groq (certifique-se de que 'groq' está importado no topo do arquivo: from groq import Groq)
-        # Se já tiver 'groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))' no topo, use essa variável.
+        # Inicializa o cliente Groq usando a chave que já está no seu Render
         client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
         prompt = f"""
-        Você é um professor experiente e justo corrigindo uma prova dissertativa.
+        Você é um professor experiente corrigindo uma prova dissertativa.
         
         DADOS DA QUESTÃO:
         - Enunciado: {enunciado}
@@ -4282,7 +4284,7 @@ def corrigir_dissertativa():
         
         TAREFA:
         Analise a imagem da resposta manuscrita do aluno. Compare com o gabarito.
-        Retorne APENAS um objeto JSON válido, sem markdown (```json), com esta estrutura exata:
+        Retorne APENAS um objeto JSON válido, sem formatação markdown (sem ```json), com esta estrutura exata:
         {{
             "nota_sugerida": <numero entre 0 e {valor_maximo}>,
             "justificativa": "<explicação técnica curta do porquê da nota, citando o que o aluno acertou ou errou>",
@@ -4290,9 +4292,8 @@ def corrigir_dissertativa():
         }}
         """
 
-        # Chamada à API do Groq com suporte a Visão
         completion = client.chat.completions.create(
-            model="llama-3.2-90b-vision-preview", # Modelo excelente para ler imagens/manuscrito
+            model="llama-3.2-90b-vision-preview",
             messages=[
                 {
                     "role": "user",
@@ -4301,22 +4302,21 @@ def corrigir_dissertativa():
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": imagem_base64 # O Groq aceita data URIs (base64) diretamente
+                                "url": imagem_base64
                             }
                         }
                     ]
                 }
             ],
-            temperature=0.2, # Baixa temperatura para correção consistente
+            temperature=0.2,
             max_tokens=500
         )
 
         resposta_ia = completion.choices[0].message.content
         
-        # Limpeza de segurança: remover marcas de markdown se a IA insistir em colocar
+        # Limpeza de segurança para remover marcas de markdown se a IA insistir
         resposta_ia = resposta_ia.replace("```json", "").replace("```", "").strip()
         
-        # Converter a resposta em dicionário Python
         resultado = json.loads(resposta_ia)
 
         return jsonify({
@@ -4328,8 +4328,9 @@ def corrigir_dissertativa():
 
     except Exception as e:
         import traceback
-        traceback.print_exc()
+        traceback.print_exc() # Isso vai mostrar o erro real no log do Render
         return jsonify({"sucesso": False, "erro": f"Erro na IA: {str(e)}"}), 500
+
         
 
 # ==========================================================
