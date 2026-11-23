@@ -4254,7 +4254,7 @@ def gerar_etiquetas_turma(id_turma):
         return f"Erro ao gerar etiquetas: {str(e)}", 500
 
 # ========================================================================
-# ✍️ CORREÇÃO DISSERTATIVA COM IA (GROQ VISION) - FORMATO MULTI-PÁGINA
+# ✍️ CORREÇÃO DISSERTATIVA COM IA (QWEN 3.8 VISION) - MULTI-PÁGINA COM LOTES
 # ========================================================================
 @app.route('/api/corrigir_dissertativa', methods=['POST', 'OPTIONS'])
 def corrigir_dissertativa():
@@ -4266,7 +4266,7 @@ def corrigir_dissertativa():
 
         data = request.json
         prompt = data.get('prompt', '')
-        imagens = data.get('imagens', [])  # [{mime: 'image/jpeg', data: 'base64 sem prefixo'}]
+        imagens = data.get('imagens', [])
 
         if not prompt:
             return jsonify({"sucesso": False, "erro": "Prompt não enviado."}), 400
@@ -4278,35 +4278,57 @@ def corrigir_dissertativa():
             return jsonify({"sucesso": False, "erro": "Nenhuma chave Groq configurada no servidor."}), 500
 
         client = Groq(api_key=chave)
+        MAX_IMG = 3  # limite do Qwen por chamada
 
-        # Monta o conteúdo: texto + TODAS as páginas
-        conteudo = [{"type": "text", "text": prompt}]
-        for img in imagens:
-            mime = img.get('mime', 'image/jpeg')
-            b64 = img.get('data', '')
-            if b64:
-                conteudo.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{b64}"}
-                })
+        # Divide as páginas em lotes de até 3
+        lotes = [imagens[i:i + MAX_IMG] for i in range(0, len(imagens), MAX_IMG)]
+        print(f"📸 [QWEN] {len(imagens)} página(s) -> {len(lotes)} lote(s)")
 
-        completion = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            messages=[{"role": "user", "content": conteudo}],
-            temperature=0.1,
-            max_tokens=2000
-        )
+        respostas_mescadas = {}  # numero -> objeto da questão
 
-        texto = completion.choices[0].message.content
-        texto = texto.replace("```json", "").replace("```", "").strip()
+        for idx, lote in enumerate(lotes):
+            conteudo = [{"type": "text", "text": prompt}]
+            for img in lote:
+                mime = img.get('mime', 'image/jpeg')
+                b64 = img.get('data', '')
+                if b64:
+                    conteudo.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"}
+                    })
 
-        return jsonify({"sucesso": True, "texto": texto})
+            completion = client.chat.completions.create(
+                model="qwen/qwen3.8-27b",
+                messages=[{"role": "user", "content": conteudo}],
+                temperature=0.1,
+                max_completion_tokens=2000
+            )
+
+            texto = completion.choices[0].message.content
+            texto = texto.replace("```json", "").replace("```", "").strip()
+
+            try:
+                analise = json.loads(texto)
+                if isinstance(analise, dict):
+                    analise = analise.get("respostas", analise.get("questoes", []))
+                for item in analise:
+                    num = item.get("numero")
+                    if num is not None:
+                        respostas_mescadas[int(num)] = item
+            except Exception as pe:
+                print(f"⚠️ [QWEN] Lote {idx+1} não retornou JSON válido: {pe}")
+
+        lista_final = [respostas_mescadas[k] for k in sorted(respostas_mescadas.keys())]
+
+        if not lista_final:
+            return jsonify({"sucesso": False, "erro": "A IA não retornou nenhuma questão. Verifique a legibilidade das fotos."}), 500
+
+        return jsonify({"sucesso": True, "texto": json.dumps(lista_final)})
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"sucesso": False, "erro": str(e)}), 500
-        
+        return jsonify({"sucesso": False, "erro": str(e)}), 500      
 
 # ==========================================================
 # 🚀 INICIALIZAÇÃO DO SERVIDOR (DEVE SER A ÚLTIMA COISA NO ARQUIVO!)
