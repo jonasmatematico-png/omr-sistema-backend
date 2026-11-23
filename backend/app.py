@@ -15,7 +15,7 @@ from openai import OpenAI
 import json as jsonlib
 from datetime import datetime
 import base64
-from openai import OpenAI
+from groq import Groq
 
 # ==========================================================
 # 📄 RELATÓRIOS PDF (Etapa 2!)
@@ -4323,6 +4323,84 @@ def gerar_etiquetas_turma(id_turma):
         import traceback
         traceback.print_exc()
         return f"Erro ao gerar etiquetas: {str(e)}", 500
+
+# ========================================================================
+# ✍️ CORREÇÃO DISSERTATIVA COM IA (GROQ - LLAMA 3.2 VISION)
+# ========================================================================
+@app.route('/api/corrigir_dissertativa', methods=['POST'])
+def corrigir_dissertativa():
+    try:
+        import json
+        import base64
+        
+        data = request.json
+        imagem_base64 = data.get('imagem') # Ex: "data:image/jpeg;base64,/9j/4AAQ..."
+        enunciado = data.get('enunciado', 'Leia a resposta do aluno na imagem.')
+        gabarito = data.get('gabarito', 'Avalie a coerência e a presença de palavras-chave.')
+        valor_maximo = float(data.get('valor_maximo', 10.0))
+
+        # Inicializa o cliente Groq (certifique-se de que 'groq' está importado no topo do arquivo: from groq import Groq)
+        # Se já tiver 'groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))' no topo, use essa variável.
+        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+        prompt = f"""
+        Você é um professor experiente e justo corrigindo uma prova dissertativa.
+        
+        DADOS DA QUESTÃO:
+        - Enunciado: {enunciado}
+        - Gabarito esperado: {gabarito}
+        - Valor máximo da questão: {valor_maximo}
+        
+        TAREFA:
+        Analise a imagem da resposta manuscrita do aluno. Compare com o gabarito.
+        Retorne APENAS um objeto JSON válido, sem markdown (```json), com esta estrutura exata:
+        {{
+            "nota_sugerida": <numero entre 0 e {valor_maximo}>,
+            "justificativa": "<explicação técnica curta do porquê da nota, citando o que o aluno acertou ou errou>",
+            "feedback_aluno": "<mensagem encorajadora e construtiva de 1 frase para o aluno>"
+        }}
+        """
+
+        # Chamada à API do Groq com suporte a Visão
+        completion = client.chat.completions.create(
+            model="llama-3.2-90b-vision-preview", # Modelo excelente para ler imagens/manuscrito
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": imagem_base64 # O Groq aceita data URIs (base64) diretamente
+                            }
+                        }
+                    ]
+                }
+            ],
+            temperature=0.2, # Baixa temperatura para correção consistente
+            max_tokens=500
+        )
+
+        resposta_ia = completion.choices[0].message.content
+        
+        # Limpeza de segurança: remover marcas de markdown se a IA insistir em colocar
+        resposta_ia = resposta_ia.replace("```json", "").replace("```", "").strip()
+        
+        # Converter a resposta em dicionário Python
+        resultado = json.loads(resposta_ia)
+
+        return jsonify({
+            "sucesso": True,
+            "nota": float(resultado.get("nota_sugerida", 0)),
+            "justificativa": resultado.get("justificativa", "Análise concluída."),
+            "feedback": resultado.get("feedback_aluno", "Bom trabalho!")
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"sucesso": False, "erro": f"Erro na IA: {str(e)}"}), 500
         
 
 # ==========================================================
